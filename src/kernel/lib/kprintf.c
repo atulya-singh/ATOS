@@ -1,11 +1,11 @@
 #include "kprintf.h"
 #include "../arch/x86_64/cpu.h"
-#include "../dev/serial.h"
+#include "../dev/console.h"
 #include <stdarg.h>
 #include <stdint.h>
 
 static void print_str(const char *s) {
-    while (*s) serial_putc(*s++);
+    while (*s) console_putc(*s++);
 }
 
 /* Collects digits LSB-first, then emits padding followed by the digits in
@@ -24,13 +24,13 @@ static void print_uint(unsigned long long value, unsigned base, int uppercase,
     }
 
     int pad = width - i;
-    while (pad-- > 0) serial_putc(zero_pad ? '0' : ' ');
-    while (i > 0) serial_putc(buf[--i]);
+    while (pad-- > 0) console_putc(zero_pad ? '0' : ' ');
+    while (i > 0) console_putc(buf[--i]);
 }
 
 static void print_int(long long value) {
     if (value < 0) {
-        serial_putc('-');
+        console_putc('-');
         print_uint((unsigned long long)(-value), 10, 0, 0, 0);
     } else {
         print_uint((unsigned long long)value, 10, 0, 0, 0);
@@ -46,7 +46,7 @@ void kprintf(const char *fmt, ...) {
 
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') {
-            serial_putc(*p);
+            console_putc(*p);
             continue;
         }
         p++;
@@ -96,7 +96,7 @@ void kprintf(const char *fmt, ...) {
         }
         case 'c': {
             char c = (char)va_arg(args, int);
-            serial_putc(c);
+            console_putc(c);
             break;
         }
         case 's': {
@@ -105,11 +105,11 @@ void kprintf(const char *fmt, ...) {
             break;
         }
         case '%':
-            serial_putc('%');
+            console_putc('%');
             break;
         default:
-            serial_putc('%');
-            if (*p) serial_putc(*p);
+            console_putc('%');
+            if (*p) console_putc(*p);
             break;
         }
     }

@@ -3,6 +3,7 @@
 
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
+#include "dev/fbcon.h"
 #include "dev/keyboard.h"
 #include "dev/pit.h"
 #include "dev/serial.h"
@@ -158,6 +159,7 @@ static void kmain_stage2(void) {
 
 void kmain(void) {
     serial_init();
+    fbcon_init();
     kprintf("ATOS: booting...\n");
 
     boot_info_init();

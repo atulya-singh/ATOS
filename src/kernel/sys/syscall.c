@@ -1,7 +1,7 @@
 #include "syscall.h"
 #include "../arch/x86_64/idt.h"
 #include "../dev/keyboard.h"
-#include "../dev/serial.h"
+#include "../dev/console.h"
 #include "../mm/vmm.h"
 #include "../sched/sched.h"
 
@@ -18,8 +18,7 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len) {
      * unmapped one would page-fault inside the kernel. */
     if (!vmm_user_range_ok(sched_current()->cr3, buf, len, 0)) return -EFAULT;
 
-    const char *p = (const char *)buf;
-    for (uint64_t i = 0; i < len; i++) serial_putc(p[i]);
+    console_write((const char *)buf, len);
     return (int64_t)len;
 }
 

@@ -47,6 +47,7 @@ for key in h i shift-1 ret; do monitor "sendkey $key"; done
 wait_for "all tasks reaped" 30 || true
 wait_for "(alive)" 20 || true
 
+check "framebuffer console"
 check "PMM:"
 check "VMM: page tables built"
 check "heap self-test: alloc/free/coalesce ok"
