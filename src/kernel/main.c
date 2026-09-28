@@ -16,6 +16,7 @@
 #include "mm/heap.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "proc/process.h"
 #include "sched/sched.h"
 #include "selftest.h"
 
@@ -52,10 +53,18 @@ static void kmain_stage2(void) {
     kprintf("ATOS: interrupts enabled, entering idle loop\n");
     asm volatile("sti");
 
+    /* Userspace starts only once the kernel self-tests are done: their
+     * exact leak accounting needs the machine to themselves. */
+    int init_started = 0;
     uint64_t last_reported = 0;
     for (;;) {
         asm volatile("hlt");
-        selftest_poll();
+        if (selftest_poll() && !init_started) {
+            static const char *const init_argv[] = {"/bin/init"};
+            kprintf("ATOS: self-tests done, starting /bin/init\n");
+            process_spawn("/bin/init", 1, init_argv);
+            init_started = 1;
+        }
 
         uint64_t t = pit_get_ticks();
         if (t - last_reported >= 500) {

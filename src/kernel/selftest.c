@@ -243,8 +243,9 @@ void selftest_spawn(void) {
     spawn_self_tests();
 }
 
-void selftest_poll(void) {
-    if (reaped_reported || sched_task_count() != baseline_tasks) return;
+int selftest_poll(void) {
+    if (reaped_reported) return 1;
+    if (sched_task_count() != baseline_tasks) return 0;
     /* Only long-lived services are left, so every stack, address space and
      * task struct should be back where it came from. */
     uint64_t pmm_after = pmm_free_page_count();
@@ -253,4 +254,5 @@ void selftest_poll(void) {
             (pmm_after == pmm_before && heap_after == heap_before) ? "cleanly" : "WITH LEAKS",
             pmm_before, pmm_after, heap_before, heap_after);
     reaped_reported = 1;
+    return 1;
 }

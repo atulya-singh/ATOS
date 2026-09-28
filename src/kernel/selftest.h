@@ -10,5 +10,6 @@ void selftest_kbd_line_service(void *arg);
  * long-lived service task exists, since it snapshots resource counts. */
 void selftest_spawn(void);
 
-/* Called from the idle loop; reports once all self-test tasks are reaped. */
-void selftest_poll(void);
+/* Called from the idle loop; reports once all self-test tasks are reaped,
+ * and from then on returns 1 (0 while tests are still running). */
+int selftest_poll(void);

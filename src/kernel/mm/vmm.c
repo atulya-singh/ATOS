@@ -138,6 +138,26 @@ void vmm_map_user(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags) {
     map_4k(phys_to_virt(cr3), virt, phys, flags | VMM_USER);
 }
 
+uint64_t vmm_user_lookup(uint64_t cr3, uint64_t virt, uint64_t *flags) {
+    if (virt >= USER_HALF_END) return 0;
+    uint64_t *pte = lookup(phys_to_virt(cr3), virt, NULL);
+    if (!pte || (*pte & PTE_HUGE)) return 0;
+    if (flags) *flags = *pte & ~PTE_ADDR_MASK;
+    return *pte & PTE_ADDR_MASK;
+}
+
+uint64_t vmm_unmap_user(uint64_t cr3, uint64_t virt) {
+    if (virt >= USER_HALF_END) return 0;
+    uint64_t *pte = lookup(phys_to_virt(cr3), virt, NULL);
+    if (!pte || (*pte & PTE_HUGE)) return 0;
+    uint64_t phys = *pte & PTE_ADDR_MASK;
+    *pte = 0;
+    uint64_t current_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    if ((current_cr3 & PTE_ADDR_MASK) == cr3) asm volatile("invlpg (%0)" ::"r"(virt) : "memory");
+    return phys;
+}
+
 void vmm_destroy_address_space(uint64_t cr3) {
     uint64_t *root = phys_to_virt(cr3);
     /* Only the lower half belongs to the process; the upper half is the

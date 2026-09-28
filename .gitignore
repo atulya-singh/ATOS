@@ -3,6 +3,7 @@ IMPLEMENTATION_PLAN.md
 
 # Build artifacts
 *.o
+*.d
 *.elf
 *.iso
 initrd.tar

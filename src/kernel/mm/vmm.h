@@ -30,6 +30,12 @@ uint64_t vmm_kernel_cr3(void);
 uint64_t vmm_create_address_space(void);
 /* Maps one 4 KiB user page (VMM_USER is added implicitly). */
 void vmm_map_user(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
+/* Physical page mapped at user address `virt` in `cr3` (0 if none), and
+ * optionally its PTE flag bits. */
+uint64_t vmm_user_lookup(uint64_t cr3, uint64_t virt, uint64_t *flags);
+/* Removes the mapping at `virt` and returns the page it pointed to (0 if
+ * none); freeing that page is the caller's call. */
+uint64_t vmm_unmap_user(uint64_t cr3, uint64_t virt);
 /* Frees every lower-half page and table, then the PML4 itself. The address
  * space must not be the one currently loaded in CR3. */
 void vmm_destroy_address_space(uint64_t cr3);

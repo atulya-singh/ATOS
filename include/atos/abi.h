@@ -16,6 +16,7 @@
 #define SYS_SEEK    6  /* seek(fd, offset, whence) -> new offset */
 #define SYS_READDIR 7  /* readdir(fd, index, struct atos_dirent *) -> 0, or -ENOENT past the end */
 #define SYS_FSTAT   8  /* fstat(fd, struct atos_stat *) -> 0 */
+#define SYS_BRK     9  /* brk(addr) -> new break (the old one on failure; 0 queries) */
 
 /* open() flags: Linux's values, for familiarity. */
 #define O_RDONLY  0x0000
@@ -53,6 +54,7 @@ struct atos_stat {
 #define ENOENT        2
 #define ESRCH         3
 #define EIO           5
+#define E2BIG         7
 #define ENOEXEC       8
 #define EBADF         9
 #define ECHILD       10

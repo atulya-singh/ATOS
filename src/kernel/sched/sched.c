@@ -149,7 +149,7 @@ static void user_task_entry(void *unused) {
 }
 
 /* stdin, stdout, and stderr all share one open file on /dev/console. */
-static void give_console_fds(struct task *t) {
+void task_open_console_fds(struct task *t) {
     struct file *con;
     if (vfs_open("/dev/console", O_RDWR, &con) != 0) return;
     t->fds[0] = con;
@@ -157,6 +157,21 @@ static void give_console_fds(struct task *t) {
     t->fds[1] = con;
     file_ref(con);
     t->fds[2] = con;
+}
+
+struct task *task_create_user_space(const char *name, uint64_t cr3, uint64_t rip, uint64_t rsp) {
+    /* Interrupts stay off until the user fields are filled in: the kernel
+     * thread is on the run queue as soon as task_create_kernel returns, and
+     * a timer tick could otherwise pick it up half-initialized. */
+    uint64_t flags = irq_save();
+    struct task *t = task_create_kernel(name, user_task_entry, NULL);
+    if (t) {
+        t->cr3 = cr3;
+        t->user_rip = rip;
+        t->user_rsp = rsp;
+    }
+    irq_restore(flags);
+    return t;
 }
 
 struct task *task_create_user(const char *name, const void *code, size_t code_size) {
@@ -178,21 +193,11 @@ struct task *task_create_user(const char *name, const void *code, size_t code_si
         vmm_map_user(cr3, va, phys, VMM_PRESENT | VMM_WRITABLE | VMM_NX);
     }
 
-    /* Mark it not-yet-runnable until the user fields are filled in: the
-     * kernel thread is on the run queue as soon as task_create_kernel
-     * returns, and a timer tick could pick it up right away. */
     uint64_t flags = irq_save();
-    struct task *t = task_create_kernel(name, user_task_entry, NULL);
-    if (!t) {
-        irq_restore(flags);
-        goto fail;
-    }
-    t->cr3 = cr3;
-    t->user_rip = USER_CODE_BASE;
-    t->user_rsp = USER_STACK_TOP;
-    give_console_fds(t);
+    struct task *t = task_create_user_space(name, cr3, USER_CODE_BASE, USER_STACK_TOP);
+    if (t) task_open_console_fds(t);
     irq_restore(flags);
-    return t;
+    if (t) return t;
 
 fail:
     vmm_destroy_address_space(cr3);

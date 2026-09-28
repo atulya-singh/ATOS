@@ -2,6 +2,7 @@
 #include "uaccess.h"
 #include "../arch/x86_64/idt.h"
 #include "../fs/vfs.h"
+#include "../proc/process.h"
 #include "../sched/sched.h"
 
 /* Cap on one read/write, so a single call can't keep a task in the kernel
@@ -80,6 +81,7 @@ void syscall_handler(struct registers *regs) {
     case SYS_SEEK:    ret = sys_seek((int)a0, (int64_t)a1, (int)a2); break;
     case SYS_READDIR: ret = sys_readdir((int)a0, a1, a2); break;
     case SYS_FSTAT:   ret = sys_fstat((int)a0, a1); break;
+    case SYS_BRK:     ret = (int64_t)process_brk(a0); break;
     case SYS_YIELD:   sched_yield(); ret = 0; break;
     case SYS_EXIT:    task_exit((int)a0);
     default:          ret = -ENOSYS; break;

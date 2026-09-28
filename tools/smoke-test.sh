@@ -52,6 +52,7 @@ wait_for "entering idle loop" 20 || true
 for key in h i shift-1 ret; do monitor "sendkey $key"; done
 
 wait_for "all tasks reaped" 30 || true
+wait_for "(init) exited" 10 || true
 wait_for "(alive)" 20 || true
 
 check "framebuffer console"
@@ -73,6 +74,11 @@ check "keyboard line: hi!"
 check "vfs: hello through /dev/console"
 check "vfs self-test ok"
 check "initrd self-test ok"
+check "init: running as /bin/init (argc=1)"
+check "init: malloc/free over brk ok"
+check "init: errno reporting ok"
+check "Welcome to ATOS!"
+check "(init) exited with code 0"
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 

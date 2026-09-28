@@ -21,6 +21,7 @@ struct task {
     int kstack_slot;     /* -1 for the idle task, which runs on the boot stack */
 
     uint64_t user_rip, user_rsp; /* ring 3 entry point; unused by kernel threads */
+    uint64_t brk_start, brk;     /* process heap: [brk_start, brk), grown by sys_brk */
 
     uint64_t wake_tick;
     int slice;           /* ticks left in the current time slice */
@@ -51,6 +52,15 @@ struct task *task_create_kernel(const char *name, void (*entry)(void *), void *a
  * below USER_STACK_TOP. `code` must be position-independent. fds 0-2 are
  * opened on /dev/console. */
 struct task *task_create_user(const char *name, const void *code, size_t code_size);
+
+/* Creates a ring-3 task that enters `rip` with `rsp` in the already
+ * populated address space `cr3`, taking ownership of it. No fds are set up.
+ * Returns NULL if out of memory (the address space is then left to the
+ * caller). */
+struct task *task_create_user_space(const char *name, uint64_t cr3, uint64_t rip, uint64_t rsp);
+
+/* Points fds 0-2 of `t` at one shared open file on /dev/console. */
+void task_open_console_fds(struct task *t);
 
 #define USER_CODE_BASE  0x0000000000400000ULL
 #define USER_STACK_TOP  0x00007FFFFFFFF000ULL
