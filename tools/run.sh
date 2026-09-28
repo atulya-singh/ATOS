@@ -9,11 +9,9 @@ cd "$(dirname "$0")/.."
 ISO=atos.iso
 DISK=disk.img
 
-# Persistent scratch disk for the virtio-blk driver (the kernel's disk
-# self-test expects this signature in sector 0). Delete it to start over.
+# Persistent FAT32 disk, mounted at /disk. Delete it to start over.
 if [ ! -f "$DISK" ]; then
-    dd if=/dev/zero of="$DISK" bs=1M count=64 status=none
-    printf 'ATOSDISK' | dd of="$DISK" conv=notrunc status=none
+    ./tools/mkfatdisk.sh "$DISK"
 fi
 
 # disable-legacy=off: the driver speaks the legacy virtio PCI interface.

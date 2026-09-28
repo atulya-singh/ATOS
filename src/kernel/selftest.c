@@ -64,7 +64,7 @@ static void spinner(void *arg) {
 }
 
 /* Pairs with tools/smoke-test.sh, which writes the signature into sector 0
- * of a scratch disk.img and, after shutdown, checks the pattern landed on
+ * of a scratch disk image and, after shutdown, checks the pattern landed on
  * the host side at DISK_TEST_LBA. 160 sectors crosses the driver's
  * 128-sector bounce-buffer boundary, so chunking is exercised too. */
 #define DISK_TEST_LBA     64
@@ -72,21 +72,23 @@ static void spinner(void *arg) {
 
 static void disk_self_test(void *arg) {
     (void)arg;
-    struct block_device *dev = block_get("vda");
-    if (!dev) {
-        kprintf("ATOS: disk self-test: no vda, skipped\n");
-        return;
-    }
-
     size_t bytes = (size_t)DISK_TEST_SECTORS * BLOCK_SECTOR_SIZE;
     uint8_t *buf = kmalloc(bytes);
     if (!buf) return;
 
-    const char *verdict = "FAILED";
-    if (block_read(dev, 0, 1, buf) != 0 || memcmp(buf, "ATOSDISK", 8) != 0) {
-        verdict = "FAILED (sector 0 signature)";
-        goto out;
+    /* Only a disk carrying the scratch signature may be written to: the
+     * others may hold real filesystems. */
+    struct block_device *dev = NULL;
+    for (unsigned i = 0; (dev = block_device_at(i)) != NULL; i++) {
+        if (block_read(dev, 0, 1, buf) == 0 && memcmp(buf, "ATOSDISK", 8) == 0) break;
     }
+    if (!dev) {
+        kprintf("ATOS: disk self-test: no scratch disk, skipped\n");
+        kfree(buf);
+        return;
+    }
+
+    const char *verdict = "FAILED";
 
     for (size_t i = 0; i < bytes; i++) buf[i] = (uint8_t)((i * 7) ^ (i >> 9));
     if (block_write(dev, DISK_TEST_LBA, DISK_TEST_SECTORS, buf) != 0) {

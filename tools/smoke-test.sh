@@ -10,17 +10,21 @@ cd "$(dirname "$0")/.."
 
 LOG=serial.log
 DISK=smoke-disk.img
+FATDISK=smoke-fat.img
 MON=$(mktemp -u /tmp/atos-mon.XXXXXX)
 rm -f "$LOG"
 
 # Fresh scratch disk each run: zeros plus a signature the kernel checks.
 dd if=/dev/zero of="$DISK" bs=1M count=4 status=none
 printf 'ATOSDISK' | dd of="$DISK" conv=notrunc status=none
+./tools/mkfatdisk.sh "$FATDISK"
 
 qemu-system-x86_64 -M q35 -m 256M -display none -no-reboot \
     -serial "file:$LOG" -monitor "unix:$MON,server,nowait" \
     -drive "file=$DISK,format=raw,if=none,id=disk0" \
     -device virtio-blk-pci,drive=disk0,disable-legacy=off \
+    -drive "file=$FATDISK,format=raw,if=none,id=disk1" \
+    -device virtio-blk-pci,drive=disk1,disable-legacy=off \
     -cdrom atos.iso &
 QEMU_PID=$!
 trap 'kill $QEMU_PID 2>/dev/null || true; rm -f "$MON"' EXIT
@@ -103,6 +107,10 @@ run_cmd "ls /bin"
 run_cmd "cat /README"
 run_cmd "nosuchcmd"
 run_cmd "echo nope > /README"
+run_cmd "ls /disk"
+run_cmd "cat /disk/HELLO.TXT"
+run_cmd "cat \"/disk/docs/a long file name.txt\""
+run_cmd "wc /disk/numbers.txt" 20
 run_cmd "exit 3"
 
 check "framebuffer console"
@@ -142,6 +150,13 @@ check_line "This file lives in the initrd, which is read-only."
 check_line "sh: nosuchcmd: no such file or directory"
 check_line "sh: /README: read-only file system"
 check_line "init: shell exited with code 3, restarting"
+check "fat32: vdb mounted at /disk"
+check_re "^ +25  hello.txt$"
+check_re "^ +<dir>  docs/$"
+check_re "^ +108894  NUMBERS.TXT$"
+check_line "Hello from a FAT32 disk!"
+check_line "Long file names work."
+check_line "20000 20000 108894 /disk/numbers.txt"
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 

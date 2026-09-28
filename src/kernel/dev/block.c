@@ -28,6 +28,10 @@ struct block_device *block_get(const char *name) {
     return NULL;
 }
 
+struct block_device *block_device_at(unsigned index) {
+    return index < device_count ? devices[index] : NULL;
+}
+
 static int range_ok(struct block_device *dev, uint64_t lba, uint32_t count) {
     return count > 0 && lba < dev->sector_count && count <= dev->sector_count - lba;
 }

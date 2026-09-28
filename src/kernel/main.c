@@ -9,7 +9,9 @@
 #include "dev/pit.h"
 #include "dev/serial.h"
 #include "dev/virtio_blk.h"
+#include "dev/block.h"
 #include "fs/devfs.h"
+#include "fs/fat.h"
 #include "fs/initrd.h"
 #include "lib/kprintf.h"
 #include "mm/boot_info.h"
@@ -29,6 +31,14 @@ static volatile LIMINE_REQUESTS_START_MARKER;
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
 
+/* Mounts the first block device holding FAT32 at /disk. */
+static void mount_disk(void) {
+    struct block_device *dev;
+    for (unsigned i = 0; (dev = block_device_at(i)) != NULL; i++) {
+        if (fat_mount(dev, "/disk") == 0) return;
+    }
+}
+
 /* Runs on the kernel-owned stack, under our own page tables, after
  * vmm_init()'s CR3 + stack switch -- see vmm_switch_and_continue. From
  * sched_init() on, this *is* the idle task. */
@@ -42,6 +52,7 @@ static void kmain_stage2(void) {
     keyboard_init();
     pci_init();
     virtio_blk_init();
+    mount_disk();
     selftest_spawn();
 
     pit_init(100);

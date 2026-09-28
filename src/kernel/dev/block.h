@@ -16,6 +16,8 @@ struct block_device {
 
 void block_register(struct block_device *dev);
 struct block_device *block_get(const char *name);
+/* The index-th registered device, or NULL past the end. */
+struct block_device *block_device_at(unsigned index);
 
 /* Bounds-checked entry points: reject ranges past the end of the device
  * before any driver sees them. */
