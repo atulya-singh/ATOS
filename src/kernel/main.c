@@ -42,7 +42,6 @@ static void kmain_stage2(void) {
     keyboard_init();
     pci_init();
     virtio_blk_init();
-    task_create_kernel("kbd-line", selftest_kbd_line_service, NULL);
     selftest_spawn();
 
     pit_init(100);
@@ -66,8 +65,11 @@ static void kmain_stage2(void) {
             init_started = 1;
         }
 
+        /* Liveness heartbeat, only until userspace owns the console:
+         * after that the shell prompt is the proof of life, and kernel
+         * chatter would land in the middle of the user's typing. */
         uint64_t t = pit_get_ticks();
-        if (t - last_reported >= 500) {
+        if (!init_started && t - last_reported >= 500) {
             kprintf("ATOS: tick=%lu (alive)\n", t);
             last_reported = t;
         }

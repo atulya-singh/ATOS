@@ -1,6 +1,7 @@
 #include "sched.h"
 #include "../arch/x86_64/cpu.h"
 #include "../arch/x86_64/gdt.h"
+#include "../arch/x86_64/idt.h"
 #include "../dev/pit.h"
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
@@ -25,6 +26,7 @@
 
 extern void context_switch(uint64_t *old_rsp, uint64_t new_rsp, uint64_t new_cr3);
 extern void task_trampoline(void);
+extern void fork_return(void);
 extern __attribute__((noreturn)) void jump_to_user(uint64_t rip, uint64_t rsp);
 
 static struct task idle_task;
@@ -103,7 +105,15 @@ static void list_insert(struct task *t) {
     irq_restore(flags);
 }
 
-struct task *task_create_kernel(const char *name, void (*entry)(void *), void *arg) {
+void task_set_name(struct task *t, const char *name) {
+    size_t len = strlen(name);
+    if (len > sizeof(t->name) - 1) len = sizeof(t->name) - 1;
+    memcpy(t->name, name, len);
+    t->name[len] = '\0';
+}
+
+/* A task struct with a kernel stack, not yet on the run queue. */
+static struct task *task_alloc(const char *name) {
     struct task *t = kmalloc(sizeof(*t));
     if (!t) return NULL;
     memset(t, 0, sizeof(*t));
@@ -113,16 +123,19 @@ struct task *task_create_kernel(const char *name, void (*entry)(void *), void *a
         kfree(t);
         return NULL;
     }
-
-    size_t len = strlen(name);
-    if (len > sizeof(t->name) - 1) len = sizeof(t->name) - 1;
-    memcpy(t->name, name, len);
-
+    task_set_name(t, name);
     t->id = next_id++;
     t->state = TASK_READY;
     t->cr3 = vmm_kernel_cr3();
     t->kstack_top = kstack_base(t->kstack_slot) + KSTACK_SIZE;
     t->slice = TIME_SLICE_TICKS;
+    return t;
+}
+
+/* A kernel thread that will start in entry(arg), not yet runnable. */
+static struct task *task_new_kernel(const char *name, void (*entry)(void *), void *arg) {
+    struct task *t = task_alloc(name);
+    if (!t) return NULL;
 
     /* Forge the frame context_switch expects to pop: six callee-saved
      * registers, then a return address. The return address is placed at
@@ -137,8 +150,16 @@ struct task *task_create_kernel(const char *name, void (*entry)(void *), void *a
     *--sp = 0;                /* r14 */
     *--sp = 0;                /* r15 */
     t->rsp = (uint64_t)sp;
+    return t;
+}
 
+void task_start(struct task *t) {
     list_insert(t);
+}
+
+struct task *task_create_kernel(const char *name, void (*entry)(void *), void *arg) {
+    struct task *t = task_new_kernel(name, entry, arg);
+    if (t) task_start(t);
     return t;
 }
 
@@ -160,17 +181,12 @@ void task_open_console_fds(struct task *t) {
 }
 
 struct task *task_create_user_space(const char *name, uint64_t cr3, uint64_t rip, uint64_t rsp) {
-    /* Interrupts stay off until the user fields are filled in: the kernel
-     * thread is on the run queue as soon as task_create_kernel returns, and
-     * a timer tick could otherwise pick it up half-initialized. */
-    uint64_t flags = irq_save();
-    struct task *t = task_create_kernel(name, user_task_entry, NULL);
+    struct task *t = task_new_kernel(name, user_task_entry, NULL);
     if (t) {
         t->cr3 = cr3;
         t->user_rip = rip;
         t->user_rsp = rsp;
     }
-    irq_restore(flags);
     return t;
 }
 
@@ -193,28 +209,88 @@ struct task *task_create_user(const char *name, const void *code, size_t code_si
         vmm_map_user(cr3, va, phys, VMM_PRESENT | VMM_WRITABLE | VMM_NX);
     }
 
-    uint64_t flags = irq_save();
     struct task *t = task_create_user_space(name, cr3, USER_CODE_BASE, USER_STACK_TOP);
-    if (t) task_open_console_fds(t);
-    irq_restore(flags);
-    if (t) return t;
+    if (t) {
+        task_open_console_fds(t);
+        task_start(t);
+        return t;
+    }
 
 fail:
     vmm_destroy_address_space(cr3);
     return NULL;
 }
 
-/* Frees every zombie except the running task, which is still standing on
- * its own kernel stack and address space. Called with interrupts off. */
+struct task *task_fork(const struct registers *regs) {
+    struct task *parent = current;
+    uint64_t cr3 = vmm_clone_address_space(parent->cr3);
+    if (!cr3) return NULL;
+    struct task *t = task_alloc(parent->name);
+    if (!t) {
+        vmm_destroy_address_space(cr3);
+        return NULL;
+    }
+    t->cr3 = cr3;
+    t->brk_start = parent->brk_start;
+    t->brk = parent->brk;
+    t->parent = parent;
+    fd_inherit(t, parent);
+
+    /* The child's first switch-in "returns" into fork_return, which pops a
+     * copy of the parent's syscall frame and irets straight to user mode,
+     * as if the child had made the same int 0x80, only with %rax = 0. */
+    struct registers *frame = (struct registers *)(t->kstack_top - sizeof(*frame));
+    *frame = *regs;
+    frame->rax = 0;
+    uint64_t *sp = (uint64_t *)(t->kstack_top - sizeof(*frame));
+    *--sp = (uint64_t)fork_return;
+    for (int i = 0; i < 6; i++) *--sp = 0; /* rbp, rbx, r12-r15 */
+    t->rsp = (uint64_t)sp;
+
+    list_insert(t);
+    return t;
+}
+
+int64_t task_wait(int64_t pid, int *code) {
+    uint64_t flags = irq_save();
+    for (;;) {
+        int have_child = 0;
+        struct task *t = current->next;
+        for (uint64_t n = 0; n < task_count; n++, t = t->next) {
+            if (t->parent != current || (pid != -1 && (int64_t)t->id != pid)) continue;
+            have_child = 1;
+            if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD) {
+                int64_t id = (int64_t)t->id;
+                *code = t->exit_code;
+                t->parent = NULL; /* collected: the reaper may free it now */
+                irq_restore(flags);
+                return id;
+            }
+        }
+        if (!have_child) {
+            irq_restore(flags);
+            return -ECHILD;
+        }
+        wait_queue_sleep(&current->child_exited);
+    }
+}
+
+/* Frees what exited tasks held, except for the running task, which still
+ * stands on its own kernel stack and address space. The struct itself
+ * stays (TASK_DEAD) while a parent may still waitpid for it. Called with
+ * interrupts off. */
 static void reap_zombies(void) {
     struct task *prev = current;
     struct task *t = current->next;
     while (t != current) {
         struct task *next = t->next;
         if (t->state == TASK_ZOMBIE) {
-            prev->next = next;
             kstack_free(t->kstack_slot);
             if (t->cr3 != vmm_kernel_cr3()) vmm_destroy_address_space(t->cr3);
+            t->state = TASK_DEAD;
+        }
+        if (t->state == TASK_DEAD && !t->parent) {
+            prev->next = next;
             kfree(t);
             task_count--;
         } else {
@@ -312,8 +388,21 @@ void task_exit(int code) {
     fd_close_all(current);
 
     irq_save();
-    kprintf("ATOS: task %lu (%s) exited with code %d\n", current->id, current->name, code);
+    /* A parent will collect (and can report) the status itself; log only
+     * the exits nobody is going to wait for. */
+    if (!current->parent) {
+        kprintf("ATOS: task %lu (%s) exited with code %d\n", current->id, current->name, code);
+    }
+    current->exit_code = code;
     current->state = TASK_ZOMBIE;
+
+    /* Orphan our children: nobody will wait for them now. */
+    struct task *t = current->next;
+    for (uint64_t n = 0; n < task_count; n++, t = t->next) {
+        if (t->parent == current) t->parent = NULL;
+    }
+    if (current->parent) wait_queue_wake_all(&current->parent->child_exited);
+
     schedule();
     __builtin_unreachable(); /* a zombie is never picked again */
 }

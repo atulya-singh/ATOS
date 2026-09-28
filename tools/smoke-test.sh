@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Headless boot test: boots atos.iso, drives it through QEMU's monitor
-# (keystrokes now; screenshots/disks as later phases need them), and
-# checks the serial log for every boot-time self-test's success line.
+# Headless boot test: boots atos.iso, checks the serial log for every
+# boot-time self-test's success line, then types commands into the shell
+# through QEMU's monitor (sendkey) and checks their output.
 # Used by CI and runnable locally via ./dev.sh tools/smoke-test.sh.
 # Needs only qemu + perl, both present on the CI runner and in the
 # dev container.
@@ -33,27 +33,77 @@ wait_for() { # wait_for <text> <seconds>
     return 1
 }
 
-monitor() { # monitor <hmp command>
+monitor() { # monitor <hmp command>...  (one connection, all commands)
     perl -MIO::Socket::UNIX -e '
-        my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or die "monitor: $!\n";
-        print $s "$ARGV[1]\n";
+        my $s = IO::Socket::UNIX->new(Peer => shift) or die "monitor: $!\n";
+        for (@ARGV) {
+            print $s "$_\n";
+            select(undef, undef, undef, 0.03); # key-repeat-ish pacing
+        }
         select(undef, undef, undef, 0.1); # let QEMU act before we hang up
-    ' "$MON" "$1"
+    ' "$MON" "$@"
+}
+
+# Types a line into the guest's keyboard, then Enter.
+type_line() {
+    local s="$1" keys=() c i
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [a-z0-9]) keys+=("sendkey $c") ;;
+            [A-Z])    keys+=("sendkey shift-$(printf '%s' "$c" | tr A-Z a-z)") ;;
+            ' ')      keys+=("sendkey spc") ;;
+            /)        keys+=("sendkey slash") ;;
+            .)        keys+=("sendkey dot") ;;
+            -)        keys+=("sendkey minus") ;;
+            '>')      keys+=("sendkey shift-dot") ;;
+            '"')      keys+=("sendkey shift-apostrophe") ;;
+            '!')      keys+=("sendkey shift-1") ;;
+            *) echo "type_line: no key mapping for '$c'" >&2; return 1 ;;
+        esac
+    done
+    monitor "${keys[@]}" "sendkey ret"
+}
+
+prompts() { tr -d '\r' < "$LOG" | { grep -o 'atos\$ ' || true; } | wc -l; }
+
+# Types a command once the shell is at a fresh prompt, and waits for the
+# next prompt (i.e. the command finished) before returning.
+run_cmd() { # run_cmd <command line> [seconds]
+    local before
+    before=$(prompts)
+    type_line "$1"
+    for _ in $(seq 1 $(( ${2:-10} * 5 ))); do
+        [ "$(prompts)" -gt "$before" ] && return 0
+        sleep 0.2
+    done
+    echo "note: no prompt after '$1'" >&2
 }
 
 status=0
-check() { # check <text>
+check() { # check <text>: some line contains it
     if grep -qF -- "$1" "$LOG"; then echo "PASS  $1"; else echo "FAIL  $1"; status=1; fi
 }
+check_line() { # check_line <text>: some line is exactly it
+    if tr -d '\r' < "$LOG" | grep -qxF -- "$1"; then echo "PASS  line: $1"; else echo "FAIL  line: $1"; status=1; fi
+}
+check_re() { # check_re <extended regex>: some line matches it
+    if tr -d '\r' < "$LOG" | grep -qE -- "$1"; then echo "PASS  re: $1"; else echo "FAIL  re: $1"; status=1; fi
+}
+check_absent() { # check_absent <text>
+    if grep -qF -- "$1" "$LOG"; then echo "FAIL  absent: $1"; status=1; else echo "PASS  absent: $1"; fi
+}
 
-wait_for "entering idle loop" 20 || true
+wait_for "all tasks reaped" 40 || true
+wait_for "atos\$ " 20 || true
 
-# Keyboard: type "hi!" + Enter; the kbd-line service should echo the line.
-for key in h i shift-1 ret; do monitor "sendkey $key"; done
-
-wait_for "all tasks reaped" 30 || true
-wait_for "(init) exited" 10 || true
-wait_for "(alive)" 20 || true
+run_cmd "echo hi from the shell"
+run_cmd "libctest one two" 20
+run_cmd "ls /bin"
+run_cmd "cat /README"
+run_cmd "nosuchcmd"
+run_cmd "echo nope > /README"
+run_cmd "exit 3"
 
 check "framebuffer console"
 check "PMM:"
@@ -62,7 +112,6 @@ check "heap self-test: alloc/free/coalesce ok"
 check "8086:29c0 class 06.00.00 host bridge"
 check "functions enumerated"
 check "entering idle loop"
-check "(alive)"
 check "preemption ok"
 check "user: kernel pointer rejected with -EFAULT"
 check "user: hello from ring 3!"
@@ -70,15 +119,29 @@ check "(user-hello) exited with code 42"
 check "(user-fault) killed: Page Fault"
 check "(user-spin) exited with code 7"
 check "all tasks reaped cleanly"
-check "keyboard line: hi!"
 check "vfs: hello through /dev/console"
 check "vfs self-test ok"
 check "initrd self-test ok"
-check "init: running as /bin/init (argc=1)"
-check "init: malloc/free over brk ok"
-check "init: errno reporting ok"
-check "Welcome to ATOS!"
-check "(init) exited with code 0"
+check "self-tests done, starting /bin/init"
+check_line "Welcome to ATOS!"
+check_line "hi from the shell"
+check_line "libctest: argv ok"
+check_line "libctest: printf formatting ok"
+check_line "libctest: malloc/free over brk ok"
+check_line "libctest: errno ok"
+check_line "libctest: fork/waitpid/getpid ok"
+check_line "libctest: exec argv passing ok"
+check_line "libctest: exec errors ok"
+check_line "libctest: write to .text kills the process ok"
+check_line "libctest: dup2 redirection ok"
+check_line "libctest: 0 failure(s)"
+check_absent "this line must not appear"
+check_re "^ +[0-9]+  echo$"
+check_re "^ +[0-9]+  libctest$"
+check_line "This file lives in the initrd, which is read-only."
+check_line "sh: nosuchcmd: no such file or directory"
+check_line "sh: /README: read-only file system"
+check_line "init: shell exited with code 3, restarting"
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 

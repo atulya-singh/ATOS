@@ -18,4 +18,11 @@ int close(int fd);
 off_t lseek(int fd, off_t offset, int whence);
 void *sbrk(intptr_t increment);
 int sched_yield(void);
+
+typedef int64_t pid_t;
+pid_t fork(void);
+/* Runs `path` with the NULL-terminated argv; returns only on failure. */
+int execv(const char *path, char *const argv[]);
+pid_t getpid(void);
+int dup2(int oldfd, int newfd);
 __attribute__((noreturn)) void _exit(int code);

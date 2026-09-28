@@ -52,6 +52,30 @@ task_trampoline:
     xor %edi, %edi
     call task_exit /* noreturn */
 
+/* First switch-in of a forked child (see task_fork): %rsp points at a copy
+ * of the parent's struct registers syscall frame. Unwind it the way
+ * isr_stubs.S's COMMON_STUB does, and iretq into user mode. */
+.global fork_return
+.type fork_return, @function
+fork_return:
+    pop %rax
+    pop %rbx
+    pop %rcx
+    pop %rdx
+    pop %rsi
+    pop %rdi
+    pop %rbp
+    pop %r8
+    pop %r9
+    pop %r10
+    pop %r11
+    pop %r12
+    pop %r13
+    pop %r14
+    pop %r15
+    add $16, %rsp /* int_no + err_code */
+    iretq
+
 /* void jump_to_user(uint64_t rip, uint64_t rsp) -- drops to ring 3 by
  * building the interrupt-return frame the CPU would have pushed had ring 3
  * been interrupted, then running iretq on it. The data segments are

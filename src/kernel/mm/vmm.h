@@ -36,6 +36,9 @@ uint64_t vmm_user_lookup(uint64_t cr3, uint64_t virt, uint64_t *flags);
 /* Removes the mapping at `virt` and returns the page it pointed to (0 if
  * none); freeing that page is the caller's call. */
 uint64_t vmm_unmap_user(uint64_t cr3, uint64_t virt);
+/* Deep copy of the lower half of `src_cr3` (for fork): every user page
+ * duplicated, same addresses and permissions. Returns 0 if out of memory. */
+uint64_t vmm_clone_address_space(uint64_t src_cr3);
 /* Frees every lower-half page and table, then the PML4 itself. The address
  * space must not be the one currently loaded in CR3. */
 void vmm_destroy_address_space(uint64_t cr3);

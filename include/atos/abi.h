@@ -17,6 +17,11 @@
 #define SYS_READDIR 7  /* readdir(fd, index, struct atos_dirent *) -> 0, or -ENOENT past the end */
 #define SYS_FSTAT   8  /* fstat(fd, struct atos_stat *) -> 0 */
 #define SYS_BRK     9  /* brk(addr) -> new break (the old one on failure; 0 queries) */
+#define SYS_FORK    10 /* fork() -> child pid in the parent, 0 in the child */
+#define SYS_EXEC    11 /* exec(path, argv) -> does not return on success */
+#define SYS_WAITPID 12 /* waitpid(pid or -1, int *status) -> pid of the exited child */
+#define SYS_GETPID  13 /* getpid() -> pid */
+#define SYS_DUP2    14 /* dup2(oldfd, newfd) -> newfd */
 
 /* open() flags: Linux's values, for familiarity. */
 #define O_RDONLY  0x0000

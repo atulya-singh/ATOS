@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "boot_info.h"
 #include "../lib/kprintf.h"
+#include "../lib/string.h"
 #include <stddef.h>
 
 #define PAGE_SIZE_2M   0x200000ULL
@@ -182,6 +183,38 @@ void vmm_destroy_address_space(uint64_t cr3) {
         pmm_free_page(root[i] & PTE_ADDR_MASK);
     }
     pmm_free_page(cr3);
+}
+
+uint64_t vmm_clone_address_space(uint64_t src_cr3) {
+    uint64_t dst_cr3 = vmm_create_address_space();
+    if (!dst_cr3) return 0;
+    uint64_t *src = phys_to_virt(src_cr3);
+
+    for (int i = 0; i < 256; i++) {
+        if (!(src[i] & VMM_PRESENT)) continue;
+        uint64_t *pdpt = phys_to_virt(src[i] & PTE_ADDR_MASK);
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & VMM_PRESENT)) continue;
+            uint64_t *pd = phys_to_virt(pdpt[j] & PTE_ADDR_MASK);
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & VMM_PRESENT)) continue;
+                uint64_t *pt = phys_to_virt(pd[k] & PTE_ADDR_MASK);
+                for (int l = 0; l < 512; l++) {
+                    if (!(pt[l] & VMM_PRESENT)) continue;
+                    uint64_t copy = pmm_alloc_page();
+                    if (!copy) {
+                        vmm_destroy_address_space(dst_cr3);
+                        return 0;
+                    }
+                    memcpy(phys_to_virt(copy), phys_to_virt(pt[l] & PTE_ADDR_MASK), PAGE_SIZE);
+                    uint64_t va = ((uint64_t)i << 39) | ((uint64_t)j << 30) |
+                                  ((uint64_t)k << 21) | ((uint64_t)l << 12);
+                    vmm_map_user(dst_cr3, va, copy, pt[l] & ~PTE_ADDR_MASK);
+                }
+            }
+        }
+    }
+    return dst_cr3;
 }
 
 int vmm_user_range_ok(uint64_t cr3, uint64_t addr, uint64_t len, int need_write) {

@@ -3,6 +3,8 @@
 #include "../arch/x86_64/idt.h"
 #include "../fs/vfs.h"
 #include "../proc/process.h"
+#include "../lib/string.h"
+#include "../mm/heap.h"
 #include "../sched/sched.h"
 
 /* Cap on one read/write, so a single call can't keep a task in the kernel
@@ -64,6 +66,49 @@ static int64_t sys_fstat(int fd, uint64_t ust) {
     return copy_to_user(ust, &st, sizeof(st));
 }
 
+static int64_t sys_fork(struct registers *regs) {
+    struct task *child = task_fork(regs);
+    return child ? (int64_t)child->id : -ENOMEM;
+}
+
+/* Copies path and the NULL-terminated argv out of user memory up front:
+ * exec destroys the address space they live in. */
+static int64_t sys_exec(struct registers *regs, uint64_t upath, uint64_t uargv) {
+    char path[PATH_MAX_USER];
+    int64_t err = strncpy_from_user(path, upath, sizeof(path));
+    if (err < 0) return err;
+
+    char *strings = kmalloc(ARGS_MAX);
+    if (!strings) return -ENOMEM;
+    const char *argv[ARGV_MAX];
+    int argc = 0;
+    size_t used = 0;
+    for (;;) {
+        uint64_t uarg;
+        err = copy_from_user(&uarg, uargv + (uint64_t)argc * 8, 8);
+        if (err) goto out;
+        if (!uarg) break;
+        if (argc == ARGV_MAX - 1) { err = -E2BIG; goto out; }
+        int64_t len = strncpy_from_user(strings + used, uarg, ARGS_MAX - used);
+        if (len < 0) { err = len == -ENAMETOOLONG ? -E2BIG : len; goto out; }
+        argv[argc++] = strings + used;
+        used += (size_t)len + 1;
+    }
+    err = process_exec(regs, path, argc, argv);
+
+out:
+    kfree(strings);
+    return err;
+}
+
+static int64_t sys_waitpid(int64_t pid, uint64_t ustatus) {
+    int code;
+    if (ustatus && !user_range_ok(ustatus, sizeof(int), 1)) return -EFAULT;
+    int64_t id = task_wait(pid, &code);
+    if (id > 0 && ustatus) copy_to_user(ustatus, &code, sizeof(code));
+    return id;
+}
+
 void syscall_handler(struct registers *regs) {
     /* Entered through an interrupt gate, so IF is clear. Syscalls can block
      * on disk I/O for a while, and every kernel structure they touch is
@@ -82,6 +127,11 @@ void syscall_handler(struct registers *regs) {
     case SYS_READDIR: ret = sys_readdir((int)a0, a1, a2); break;
     case SYS_FSTAT:   ret = sys_fstat((int)a0, a1); break;
     case SYS_BRK:     ret = (int64_t)process_brk(a0); break;
+    case SYS_FORK:    ret = sys_fork(regs); break;
+    case SYS_EXEC:    ret = sys_exec(regs, a0, a1); break;
+    case SYS_WAITPID: ret = sys_waitpid((int64_t)a0, a1); break;
+    case SYS_GETPID:  ret = (int64_t)sched_current()->id; break;
+    case SYS_DUP2:    ret = fd_dup2(sched_current(), (int)a0, (int)a1); break;
     case SYS_YIELD:   sched_yield(); ret = 0; break;
     case SYS_EXIT:    task_exit((int)a0);
     default:          ret = -ENOSYS; break;

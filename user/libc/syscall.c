@@ -1,6 +1,7 @@
 #include <atos.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 int errno;
@@ -70,6 +71,27 @@ void *sbrk(intptr_t increment) {
     }
     cur = got;
     return (void *)old;
+}
+
+pid_t fork(void) {
+    return check(syscall3(SYS_FORK, 0, 0, 0));
+}
+
+int execv(const char *path, char *const argv[]) {
+    return (int)check(syscall3(SYS_EXEC, (long)path, (long)argv, 0));
+}
+
+pid_t waitpid(pid_t pid, int *status, int options) {
+    (void)options; /* no WNOHANG etc. yet */
+    return check(syscall3(SYS_WAITPID, pid, (long)status, 0));
+}
+
+pid_t getpid(void) {
+    return syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+int dup2(int oldfd, int newfd) {
+    return (int)check(syscall3(SYS_DUP2, oldfd, newfd, 0));
 }
 
 void _exit(int code) {

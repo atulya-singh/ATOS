@@ -1,6 +1,8 @@
 #include "process.h"
 #include "elf.h"
+#include "../arch/x86_64/idt.h"
 #include "../lib/kprintf.h"
+#include <stddef.h>
 #include "../lib/string.h"
 #include "../mm/boot_info.h"
 #include "../mm/pmm.h"
@@ -90,7 +92,34 @@ struct task *process_spawn(const char *path, int argc, const char *const argv[])
     }
     t->brk_start = t->brk = image_end;
     task_open_console_fds(t);
+    task_start(t);
     return t;
+}
+
+int process_exec(struct registers *regs, const char *path, int argc, const char *const argv[]) {
+    uint64_t cr3, rip, rsp, image_end;
+    int err = build_image(path, argc, argv, &cr3, &rip, &rsp, &image_end);
+    if (err) return err;
+
+    /* Point of no return. Load the new tables before freeing the old ones:
+     * we're running on them until the CR3 write (kernel stack and code are
+     * in the shared upper half, so both views work for this code). */
+    struct task *t = sched_current();
+    uint64_t old_cr3 = t->cr3;
+    t->cr3 = cr3;
+    asm volatile("mov %0, %%cr3" ::"r"(cr3) : "memory");
+    vmm_destroy_address_space(old_cr3);
+
+    t->brk_start = t->brk = image_end;
+    task_set_name(t, basename(path));
+
+    /* A clean slate: the new program must see nothing of the old one's
+     * registers. cs/ss already hold the user selectors. */
+    memset(regs, 0, offsetof(struct registers, int_no));
+    regs->rip = rip;
+    regs->rsp = rsp;
+    regs->rflags = 0x202; /* IF */
+    return 0;
 }
 
 uint64_t process_brk(uint64_t addr) {

@@ -1,6 +1,5 @@
 #include "selftest.h"
 #include "dev/block.h"
-#include "dev/keyboard.h"
 #include "dev/pit.h"
 #include "fs/vfs.h"
 #include "lib/kprintf.h"
@@ -62,26 +61,6 @@ static void spinner(void *arg) {
     uint64_t others = worker_progress - progress_before;
     kprintf("ATOS: preemption %s: workers ran %lu times while spinner held the CPU for 40 ticks\n",
             others ? "ok" : "FAILED", others);
-}
-
-/* Long-lived stand-in for a shell until Phase 5: assembles keystrokes
- * into lines (with backspace) and reports each completed one. */
-void selftest_kbd_line_service(void *arg) {
-    (void)arg;
-    char line[128];
-    unsigned len = 0;
-    for (;;) {
-        char c = keyboard_getc();
-        if (c == '\n') {
-            line[len] = '\0';
-            kprintf("ATOS: keyboard line: %s\n", line);
-            len = 0;
-        } else if (c == '\b') {
-            if (len) len--;
-        } else if (len < sizeof(line) - 1) {
-            line[len++] = c;
-        }
-    }
 }
 
 /* Pairs with tools/smoke-test.sh, which writes the signature into sector 0
