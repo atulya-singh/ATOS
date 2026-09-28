@@ -24,17 +24,17 @@ void isr_handler(struct registers *regs) {
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
     }
 
-    kprintf("\n--- unhandled exception %llu (%s) ---\n", regs->int_no,
+    kprintf("\n--- unhandled exception %lu (%s) ---\n", regs->int_no,
             exception_names[regs->int_no]);
-    kprintf("error_code=%#llx", regs->err_code);
-    if (regs->int_no == 14) kprintf(" cr2=%#llx", cr2);
-    kprintf("\nrip=%#016llx cs=%#llx rflags=%#llx\n", regs->rip, regs->cs, regs->rflags);
-    kprintf("rax=%#016llx rbx=%#016llx rcx=%#016llx rdx=%#016llx\n",
+    kprintf("error_code=%#lx", regs->err_code);
+    if (regs->int_no == 14) kprintf(" cr2=%#lx", cr2);
+    kprintf("\nrip=%#016lx cs=%#lx rflags=%#lx\n", regs->rip, regs->cs, regs->rflags);
+    kprintf("rax=%#016lx rbx=%#016lx rcx=%#016lx rdx=%#016lx\n",
             regs->rax, regs->rbx, regs->rcx, regs->rdx);
-    kprintf("rsi=%#016llx rdi=%#016llx rbp=%#016llx\n", regs->rsi, regs->rdi, regs->rbp);
-    kprintf("r8=%#016llx r9=%#016llx r10=%#016llx r11=%#016llx\n",
+    kprintf("rsi=%#016lx rdi=%#016lx rbp=%#016lx\n", regs->rsi, regs->rdi, regs->rbp);
+    kprintf("r8=%#016lx r9=%#016lx r10=%#016lx r11=%#016lx\n",
             regs->r8, regs->r9, regs->r10, regs->r11);
-    kprintf("r12=%#016llx r13=%#016llx r14=%#016llx r15=%#016llx\n",
+    kprintf("r12=%#016lx r13=%#016lx r14=%#016lx r15=%#016lx\n",
             regs->r12, regs->r13, regs->r14, regs->r15);
     kprintf("--- system halted ---\n");
 

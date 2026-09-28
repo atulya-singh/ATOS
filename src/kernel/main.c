@@ -37,7 +37,7 @@ void kmain(void) {
         asm volatile("hlt");
         uint64_t t = pit_get_ticks();
         if (t - last_reported >= 500) {
-            kprintf("ATOS: tick=%llu (alive)\n", t);
+            kprintf("ATOS: tick=%lu (alive)\n", t);
             last_reported = t;
         }
     }

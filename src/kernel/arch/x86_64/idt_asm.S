@@ -6,3 +6,5 @@
 idt_flush:
     lidt (%rdi)
     ret
+
+.section .note.GNU-stack,"",@progbits

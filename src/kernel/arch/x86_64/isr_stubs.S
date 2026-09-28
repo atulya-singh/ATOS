@@ -131,3 +131,5 @@ IRQ 15, 47
 
 COMMON_STUB isr_common_stub, isr_handler
 COMMON_STUB irq_common_stub, irq_handler
+
+.section .note.GNU-stack,"",@progbits
