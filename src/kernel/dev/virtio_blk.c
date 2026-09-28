@@ -1,5 +1,6 @@
 #include "virtio_blk.h"
 #include "block.h"
+#include <atos/abi.h>
 #include "pci.h"
 #include "pit.h"
 #include "../lib/io.h"
@@ -41,9 +42,6 @@
 #define VIRTIO_BLK_T_IN  0
 #define VIRTIO_BLK_T_OUT 1
 #define VIRTIO_BLK_S_OK  0
-
-#define EIO    5
-#define EROFS  30
 
 struct vring_desc {
     uint64_t addr;

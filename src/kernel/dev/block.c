@@ -1,10 +1,8 @@
 #include "block.h"
+#include <atos/abi.h>
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
 #include <stddef.h>
-
-#define EIO    5
-#define EINVAL 22
 
 #define MAX_BLOCK_DEVICES 8
 static struct block_device *devices[MAX_BLOCK_DEVICES];

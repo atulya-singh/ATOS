@@ -7,10 +7,10 @@
 /* Far above the HHDM range (which only spans actual installed RAM) and the
  * kernel image, so it can't collide with either. */
 #define KHEAP_BASE 0xFFFFA00000000000ULL
-/* Fixed-size to start -- simple and "enough to start" per the plan; making
- * this demand-grow into a larger reserved virtual range is a documented
- * follow-up once something actually pressures it. */
-#define KHEAP_SIZE (1 * 1024 * 1024ULL)
+/* Fixed-size: simple, and it keeps the boot-time leak checks exact (a
+ * growing heap would shift the free-page count mid-test). 4 MiB covers task
+ * structs, open files, and filesystem metadata comfortably for now. */
+#define KHEAP_SIZE (4 * 1024 * 1024ULL)
 #define ALIGNMENT  16ULL
 
 struct block_header {

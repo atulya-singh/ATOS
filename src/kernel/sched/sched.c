@@ -148,6 +148,17 @@ static void user_task_entry(void *unused) {
     jump_to_user(self->user_rip, self->user_rsp);
 }
 
+/* stdin, stdout, and stderr all share one open file on /dev/console. */
+static void give_console_fds(struct task *t) {
+    struct file *con;
+    if (vfs_open("/dev/console", O_RDWR, &con) != 0) return;
+    t->fds[0] = con;
+    file_ref(con);
+    t->fds[1] = con;
+    file_ref(con);
+    t->fds[2] = con;
+}
+
 struct task *task_create_user(const char *name, const void *code, size_t code_size) {
     uint64_t cr3 = vmm_create_address_space();
     if (!cr3) return NULL;
@@ -179,6 +190,7 @@ struct task *task_create_user(const char *name, const void *code, size_t code_si
     t->cr3 = cr3;
     t->user_rip = USER_CODE_BASE;
     t->user_rsp = USER_STACK_TOP;
+    give_console_fds(t);
     irq_restore(flags);
     return t;
 
@@ -290,6 +302,10 @@ void mutex_unlock(struct mutex *m) {
 }
 
 void task_exit(int code) {
+    /* In task context still (even when called from a fault handler), so
+     * closing files may block on filesystem I/O. */
+    fd_close_all(current);
+
     irq_save();
     kprintf("ATOS: task %lu (%s) exited with code %d\n", current->id, current->name, code);
     current->state = TASK_ZOMBIE;

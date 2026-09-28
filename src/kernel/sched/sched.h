@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../fs/vfs.h"
 
 enum task_state {
     TASK_READY,    /* runnable -- including the one currently running */
@@ -24,6 +25,8 @@ struct task {
     uint64_t wake_tick;
     int slice;           /* ticks left in the current time slice */
 
+    struct file *fds[MAX_FDS]; /* see fd_* in fs/vfs.h; kernel threads have none */
+
     struct task *next;   /* circular list of every task, in round-robin order */
     struct task *wait_next; /* link while parked on a wait_queue */
 };
@@ -45,7 +48,8 @@ struct task *task_create_kernel(const char *name, void (*entry)(void *), void *a
 
 /* Creates a ring-3 task in a fresh address space, with `code` copied to
  * USER_CODE_BASE (read + execute) and a writable, non-executable stack
- * below USER_STACK_TOP. `code` must be position-independent. */
+ * below USER_STACK_TOP. `code` must be position-independent. fds 0-2 are
+ * opened on /dev/console. */
 struct task *task_create_user(const char *name, const void *code, size_t code_size);
 
 #define USER_CODE_BASE  0x0000000000400000ULL

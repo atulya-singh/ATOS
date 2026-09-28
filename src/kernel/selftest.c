@@ -2,6 +2,7 @@
 #include "dev/block.h"
 #include "dev/keyboard.h"
 #include "dev/pit.h"
+#include "fs/vfs.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
@@ -136,7 +137,48 @@ out:
     kfree(buf);
 }
 
+/* Exercises path normalization, devfs lookup/readdir, char-device I/O,
+ * and error paths through the same entry points the syscalls use. */
+static void vfs_self_test(void *arg) {
+    (void)arg;
+    const char *verdict = "ok";
+    struct file *f;
+    struct atos_dirent ent;
+
+    if (vfs_open("/dev/console", O_WRONLY, &f) != 0) {
+        verdict = "FAILED (open /dev/console)";
+        goto out;
+    }
+    static const char msg[] = "ATOS: vfs: hello through /dev/console\n";
+    int64_t n = vfs_write(f, msg, sizeof(msg) - 1);
+    file_close(f);
+    if (n != (int64_t)sizeof(msg) - 1) { verdict = "FAILED (console write)"; goto out; }
+
+    if (vfs_open("/dev/../dev/./null", O_RDWR, &f) != 0) { verdict = "FAILED (normalized path)"; goto out; }
+    char c;
+    int ok = vfs_write(f, "x", 1) == 1 && vfs_read(f, &c, 1) == 0 && vfs_seek(f, 0, SEEK_SET) == -ESPIPE;
+    file_close(f);
+    if (!ok) { verdict = "FAILED (/dev/null semantics)"; goto out; }
+
+    if (vfs_open("/dev", O_RDONLY, &f) != 0) { verdict = "FAILED (open /dev)"; goto out; }
+    unsigned count = 0;
+    while (vfs_readdir(f, count, &ent) == 0) count++;
+    int readdir_ok = count == 2 && vfs_readdir(f, 0, &ent) == 0 && memcmp(ent.name, "console", 8) == 0;
+    int write_dir = vfs_write(f, "x", 1);
+    file_close(f);
+    if (!readdir_ok) { verdict = "FAILED (readdir /dev)"; goto out; }
+    if (write_dir != -EBADF) { verdict = "FAILED (write to read-only dir fd)"; goto out; }
+
+    if (vfs_open("/dev/nope", O_RDONLY, &f) != -ENOENT) { verdict = "FAILED (missing file)"; goto out; }
+    if (vfs_open("/dev", O_WRONLY, &f) != -EISDIR) { verdict = "FAILED (dir opened for write)"; goto out; }
+    if (vfs_open("relative", O_RDONLY, &f) != -ENOENT) { verdict = "FAILED (relative path)"; goto out; }
+
+out:
+    kprintf("ATOS: vfs self-test %s\n", verdict);
+}
+
 static void spawn_self_tests(void) {
+    task_create_kernel("vfs-test", vfs_self_test, NULL);
     task_create_kernel("disk-test", disk_self_test, NULL);
     task_create_kernel("worker-a", worker, "worker-a");
     task_create_kernel("worker-b", worker, "worker-b");

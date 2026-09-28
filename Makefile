@@ -25,6 +25,7 @@ CFLAGS := -Wall -Wextra -std=gnu11 -g \
           -mcmodel=kernel \
           -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
           -I src/kernel \
+          -I include \
           -I third_party/limine
 
 ASFLAGS := $(CFLAGS)
