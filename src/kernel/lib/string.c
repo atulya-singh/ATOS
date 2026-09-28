@@ -49,3 +49,18 @@ int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) a++, b++;
     return (unsigned char)*a - (unsigned char)*b;
 }
+
+char *strchr(const char *s, int c) {
+    for (;; s++) {
+        if (*s == (char)c) return (char *)s;
+        if (!*s) return NULL;
+    }
+}
+
+char *strrchr(const char *s, int c) {
+    const char *last = NULL;
+    for (;; s++) {
+        if (*s == (char)c) last = s;
+        if (!*s) return (char *)last;
+    }
+}

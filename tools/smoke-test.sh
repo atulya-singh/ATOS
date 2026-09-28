@@ -111,6 +111,17 @@ run_cmd "ls /disk"
 run_cmd "cat /disk/HELLO.TXT"
 run_cmd "cat \"/disk/docs/a long file name.txt\""
 run_cmd "wc /disk/numbers.txt" 20
+run_cmd "echo hello fat > /disk/new.txt"
+run_cmd "echo line two >> /disk/new.txt"
+run_cmd "cat /disk/new.txt"
+run_cmd "echo long name ok > \"/disk/docs/Mixed Case Name.txt\""
+run_cmd "ls /disk/docs"
+run_cmd "cat /disk/numbers.txt > /disk/copy.txt" 30
+run_cmd "wc /disk/copy.txt" 20
+run_cmd "echo tiny > /disk/shrunk.txt"
+run_cmd "cat /disk/numbers.txt > /disk/shrunk.txt" 30
+run_cmd "echo tiny > /disk/shrunk.txt"
+run_cmd "wc /disk/shrunk.txt"
 run_cmd "exit 3"
 
 check "framebuffer console"
@@ -157,6 +168,11 @@ check_re "^ +108894  NUMBERS.TXT$"
 check_line "Hello from a FAT32 disk!"
 check_line "Long file names work."
 check_line "20000 20000 108894 /disk/numbers.txt"
+check_line "hello fat"
+check_line "line two"
+check_re "^ +13  Mixed Case Name.txt$"
+check_line "20000 20000 108894 /disk/copy.txt"
+check_line "1 1 5 /disk/shrunk.txt"
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 
@@ -174,6 +190,31 @@ if perl -e '
 else
     echo "FAIL  host sees guest-written pattern in $DISK"
     status=1
+fi
+
+# Files the guest wrote to the FAT disk must read back through mtools, and
+# the volume must pass fsck (when dosfstools is installed).
+host_check() { # host_check <description> <command...>
+    local what=$1
+    shift
+    if "$@" >/dev/null 2>&1; then echo "PASS  host: $what"; else echo "FAIL  host: $what"; status=1; fi
+}
+fat_is() { # fat_is <path on the FAT disk> <file with the expected contents>
+    mtype -i "$FATDISK" "::$1" | cmp -s - "$2"
+}
+printf 'hello fat\nline two\n' > smoke-expect-new.txt
+printf 'long name ok\n' > smoke-expect-long.txt
+seq 1 20000 > smoke-expect-copy.txt
+printf 'tiny\n' > smoke-expect-tiny.txt
+host_check "new.txt contents" fat_is /new.txt smoke-expect-new.txt
+host_check "long name created" fat_is "/docs/Mixed Case Name.txt" smoke-expect-long.txt
+host_check "copy.txt matches numbers.txt" fat_is /copy.txt smoke-expect-copy.txt
+host_check "shrunk.txt truncated" fat_is /shrunk.txt smoke-expect-tiny.txt
+rm -f smoke-expect-*.txt
+if command -v fsck.fat >/dev/null; then
+    host_check "fsck.fat finds no errors" fsck.fat -n "$FATDISK"
+else
+    echo "SKIP  host: fsck.fat (dosfstools not installed)"
 fi
 
 if [ $status -ne 0 ]; then

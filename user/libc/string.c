@@ -101,6 +101,7 @@ const char *strerror(int err) {
     case EISDIR:       return "is a directory";
     case EINVAL:       return "invalid argument";
     case EMFILE:       return "too many open files";
+    case EFBIG:        return "file too large";
     case ENOSPC:       return "no space left on device";
     case ESPIPE:       return "illegal seek";
     case EROFS:        return "read-only file system";

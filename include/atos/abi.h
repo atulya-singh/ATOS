@@ -70,6 +70,7 @@ struct atos_stat {
 #define EISDIR       21
 #define EINVAL       22
 #define EMFILE       24
+#define EFBIG        27
 #define ENOSPC       28
 #define ESPIPE       29
 #define EROFS        30
