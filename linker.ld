@@ -13,6 +13,13 @@ SECTIONS
 {
     . = 0xffffffff80000000;
 
+    /* Everything from here through kernel_end is what the VMM maps as the
+     * kernel image (see src/kernel/mm/vmm.c). kernel_image_start covers
+     * .limine_requests too, since boot_info.c re-reads Limine's response
+     * pointers from that section, and it must stay mapped after we switch
+     * to our own page tables. */
+    kernel_image_start = .;
+
     .limine_requests : {
         KEEP(*(.limine_requests_start))
         KEEP(*(.limine_requests))
@@ -21,12 +28,15 @@ SECTIONS
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    kernel_text_start = .;
     .text : {
         *(.text .text.*)
     } : text
+    kernel_text_end = .;
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    kernel_rodata_start = .;
     .rodata : {
         *( .rodata .rodata*)
     } :rodata
@@ -39,14 +49,16 @@ SECTIONS
     .note.gnu.build-id : {
         *(.note.gnu.build-id)
     } :rodata
+    kernel_rodata_end = .;
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    kernel_data_start = .;
     .data : {
         *(.data .data*)
     } :data
 
-    .init_array : { 
+    .init_array : {
         __init_array_start = .;
         KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
         KEEP(*(.init_array .ctors))
@@ -64,6 +76,7 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
+    kernel_end = .;
 
     /DISCARD/ : {
         *(.note .note.*)

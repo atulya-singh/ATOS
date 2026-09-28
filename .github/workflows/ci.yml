@@ -26,5 +26,8 @@ jobs:
         run: |
           timeout 20 qemu-system-x86_64 -M q35 -m 256M -serial stdio \
             -no-reboot -display none -cdrom atos.iso | tee serial.log || true
+          grep -q "PMM:" serial.log
+          grep -q "VMM: page tables built" serial.log
+          grep -q "heap self-test: alloc/free/coalesce ok" serial.log
           grep -q "entering idle loop" serial.log
           grep -q "tick=" serial.log

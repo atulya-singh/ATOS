@@ -27,7 +27,17 @@ void isr_handler(struct registers *regs) {
     kprintf("\n--- unhandled exception %lu (%s) ---\n", regs->int_no,
             exception_names[regs->int_no]);
     kprintf("error_code=%#lx", regs->err_code);
-    if (regs->int_no == 14) kprintf(" cr2=%#lx", cr2);
+    if (regs->int_no == 14) {
+        /* #PF error code bits: every fault today is a genuine bug (no
+         * COW/demand-paging path exists until processes do in Phase 3+),
+         * so decoding these is what makes *which* bug it is obvious. */
+        kprintf(" cr2=%#lx [%s, %s, %s%s%s]", cr2,
+                (regs->err_code & 0x1) ? "protection-violation" : "non-present",
+                (regs->err_code & 0x2) ? "write" : "read",
+                (regs->err_code & 0x4) ? "user-mode" : "supervisor-mode",
+                (regs->err_code & 0x8) ? ", reserved-bit-violation" : "",
+                (regs->err_code & 0x10) ? ", instruction-fetch" : "");
+    }
     kprintf("\nrip=%#016lx cs=%#lx rflags=%#lx\n", regs->rip, regs->cs, regs->rflags);
     kprintf("rax=%#016lx rbx=%#016lx rcx=%#016lx rdx=%#016lx\n",
             regs->rax, regs->rbx, regs->rcx, regs->rdx);
