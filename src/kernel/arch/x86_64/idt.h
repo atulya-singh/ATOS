@@ -15,3 +15,8 @@ struct registers {
 #define SYSCALL_VECTOR 0x80
 
 void idt_init(void);
+
+/* Routes PIC line `irq` (0-15) to `handler` and unmasks it. The handler
+ * runs in interrupt context before EOI; keep it short and don't block.
+ * IRQ0 (the timer) is wired internally and can't be replaced. */
+void irq_install_handler(uint8_t irq, void (*handler)(void));

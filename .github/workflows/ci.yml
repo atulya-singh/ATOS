@@ -23,18 +23,4 @@ jobs:
         run: make iso
 
       - name: Boot smoke test
-        run: |
-          timeout 20 qemu-system-x86_64 -M q35 -m 256M -serial stdio \
-            -no-reboot -display none -cdrom atos.iso | tee serial.log || true
-          grep -q "PMM:" serial.log
-          grep -q "VMM: page tables built" serial.log
-          grep -q "heap self-test: alloc/free/coalesce ok" serial.log
-          grep -q "entering idle loop" serial.log
-          grep -q "tick=" serial.log
-          grep -q "preemption ok" serial.log
-          grep -q "user: kernel pointer rejected with -EFAULT" serial.log
-          grep -q "user: hello from ring 3!" serial.log
-          grep -q "(user-hello) exited with code 42" serial.log
-          grep -q "(user-fault) killed: Page Fault" serial.log
-          grep -q "(user-spin) exited with code 7" serial.log
-          grep -q "all tasks reaped cleanly" serial.log
+        run: ./tools/smoke-test.sh

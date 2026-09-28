@@ -3,6 +3,7 @@
 
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
+#include "dev/keyboard.h"
 #include "dev/pit.h"
 #include "dev/serial.h"
 #include "lib/kprintf.h"
@@ -73,6 +74,26 @@ static void spinner(void *arg) {
             others ? "ok" : "FAILED", others);
 }
 
+/* Long-lived stand-in for a shell until Phase 5: assembles keystrokes
+ * into lines (with backspace) and reports each completed one. */
+static void kbd_line_service(void *arg) {
+    (void)arg;
+    char line[128];
+    unsigned len = 0;
+    for (;;) {
+        char c = keyboard_getc();
+        if (c == '\n') {
+            line[len] = '\0';
+            kprintf("ATOS: keyboard line: %s\n", line);
+            len = 0;
+        } else if (c == '\b') {
+            if (len) len--;
+        } else if (len < sizeof(line) - 1) {
+            line[len++] = c;
+        }
+    }
+}
+
 static void spawn_self_tests(void) {
     task_create_kernel("worker-a", worker, "worker-a");
     task_create_kernel("worker-b", worker, "worker-b");
@@ -93,7 +114,12 @@ static void kmain_stage2(void) {
     heap_self_test();
 
     sched_init();
+    keyboard_init();
+    task_create_kernel("kbd-line", kbd_line_service, NULL);
 
+    /* Everything spawned from here on is a self-test that should exit and
+     * hand back every resource it took. */
+    uint64_t baseline_tasks = sched_task_count();
     uint64_t pmm_before = pmm_free_page_count();
     uint64_t heap_before = heap_free_bytes();
     spawn_self_tests();
@@ -111,8 +137,8 @@ static void kmain_stage2(void) {
     for (;;) {
         asm volatile("hlt");
 
-        if (!reaped_reported && sched_task_count() == 1) {
-            /* Only idle is left, so every stack, address space and task
+        if (!reaped_reported && sched_task_count() == baseline_tasks) {
+            /* Only long-lived services are left, so every stack, address space and task
              * struct should be back where it came from. */
             uint64_t pmm_after = pmm_free_page_count();
             uint64_t heap_after = heap_free_bytes();

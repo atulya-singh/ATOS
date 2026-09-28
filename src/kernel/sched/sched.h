@@ -5,6 +5,7 @@
 enum task_state {
     TASK_READY,    /* runnable -- including the one currently running */
     TASK_SLEEPING, /* waiting for pit ticks to reach wake_tick */
+    TASK_BLOCKED,  /* parked on a wait_queue until something wakes it */
     TASK_ZOMBIE,   /* exited; resources freed by the next schedule() */
 };
 
@@ -24,6 +25,13 @@ struct task {
     int slice;           /* ticks left in the current time slice */
 
     struct task *next;   /* circular list of every task, in round-robin order */
+    struct task *wait_next; /* link while parked on a wait_queue */
+};
+
+/* A list of tasks blocked on some event (input arriving, I/O finishing).
+ * Zero-initialized is empty. */
+struct wait_queue {
+    struct task *head;
 };
 
 /* Turns the currently running boot context into the idle task (id 0),
@@ -54,3 +62,13 @@ void sched_tick(void);
 void sched_yield(void);
 void task_sleep(uint64_t ticks);
 __attribute__((noreturn)) void task_exit(int code);
+
+/* Blocks the current task on `wq` until wait_queue_wake_all. Call with
+ * interrupts disabled, *after* re-checking the condition under that same
+ * disabled section: that ordering is what rules out a lost wakeup when
+ * the event fires between the check and the sleep. Returns with
+ * interrupts still disabled; callers loop, since waking is a hint and
+ * the condition may already be consumed again. */
+void wait_queue_sleep(struct wait_queue *wq);
+/* Makes every waiter runnable. Safe from IRQ context. */
+void wait_queue_wake_all(struct wait_queue *wq);

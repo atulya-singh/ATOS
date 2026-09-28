@@ -65,10 +65,19 @@ void isr_handler(struct registers *regs) {
     for (;;) asm volatile("cli; hlt");
 }
 
+static void (*irq_handlers[16])(void);
+
+void irq_install_handler(uint8_t irq, void (*handler)(void)) {
+    irq_handlers[irq] = handler;
+    if (irq >= 8) pic_clear_mask(2); /* slave PIC reaches the CPU via IRQ2 */
+    pic_clear_mask(irq);
+}
+
 void irq_handler(struct registers *regs) {
     uint64_t irq = regs->int_no - 32;
 
     if (irq == 0) pit_tick();
+    else if (irq_handlers[irq]) irq_handlers[irq]();
 
     /* EOI before any task switch: the task we switch to may not come back
      * through here for a long time, and until the PIC sees EOI it holds

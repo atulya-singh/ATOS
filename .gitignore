@@ -6,3 +6,6 @@ IMPLEMENTATION_PLAN.md
 *.elf
 *.iso
 iso_root/
+
+# Smoke-test output
+serial.log

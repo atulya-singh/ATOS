@@ -255,6 +255,26 @@ void task_sleep(uint64_t ticks) {
     irq_restore(flags);
 }
 
+void wait_queue_sleep(struct wait_queue *wq) {
+    current->state = TASK_BLOCKED;
+    current->wait_next = wq->head;
+    wq->head = current;
+    schedule();
+}
+
+void wait_queue_wake_all(struct wait_queue *wq) {
+    uint64_t flags = irq_save();
+    struct task *t = wq->head;
+    while (t) {
+        struct task *next = t->wait_next;
+        t->wait_next = NULL;
+        if (t->state == TASK_BLOCKED) t->state = TASK_READY;
+        t = next;
+    }
+    wq->head = NULL;
+    irq_restore(flags);
+}
+
 void task_exit(int code) {
     irq_save();
     kprintf("ATOS: task %lu (%s) exited with code %d\n", current->id, current->name, code);
