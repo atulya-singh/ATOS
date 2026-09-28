@@ -1,0 +1,8 @@
+# Planning docs kept local, not tracked in git
+IMPLEMENTATION_PLAN.md
+
+# Build artifacts
+*.o
+*.elf
+*.iso
+iso_root/

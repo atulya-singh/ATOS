@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential xorriso mtools qemu-system-x86
+
+      - name: Build kernel
+        run: make
+
+      - name: Build ISO
+        run: make iso
+
+      - name: Boot smoke test
+        run: |
+          timeout 20 qemu-system-x86_64 -M q35 -m 256M -serial stdio \
+            -no-reboot -display none -cdrom atos.iso | tee serial.log || true
+          grep -q "entering idle loop" serial.log
+          grep -q "tick=" serial.log

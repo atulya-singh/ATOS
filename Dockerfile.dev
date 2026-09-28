@@ -1,0 +1,28 @@
+# Build/run environment for ATOS.
+#
+# macOS ships Apple clang + ld64, neither of which can produce or link a
+# freestanding elf64-x86-64 kernel (`ld -m elf_x86_64` doesn't exist there).
+# This image gives every contributor the same GNU toolchain + QEMU regardless
+# of host OS. Build once, reuse via `./dev.sh`.
+FROM debian:bookworm-slim
+
+# gcc-x86-64-linux-gnu / binutils-x86-64-linux-gnu: the actual kernel
+#   cross-toolchain (targets x86_64 regardless of this image's own arch).
+# gcc / build-essential: still needed natively, to build limine.c (the
+#   host-side "limine bios-install" deploy tool) for the container's arch.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        gcc-x86-64-linux-gnu \
+        binutils-x86-64-linux-gnu \
+        nasm \
+        xorriso \
+        mtools \
+        qemu-system-x86 \
+        gdb-multiarch \
+        make \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
