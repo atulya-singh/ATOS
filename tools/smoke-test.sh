@@ -72,6 +72,7 @@ check "all tasks reaped cleanly"
 check "keyboard line: hi!"
 check "vfs: hello through /dev/console"
 check "vfs self-test ok"
+check "initrd self-test ok"
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 

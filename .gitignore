@@ -5,6 +5,7 @@ IMPLEMENTATION_PLAN.md
 *.o
 *.elf
 *.iso
+initrd.tar
 iso_root/
 
 # Smoke-test output
@@ -12,3 +13,6 @@ serial.log
 
 # Scratch disk images
 *.img
+
+# Build staging (initrd tree, userspace objects)
+build/

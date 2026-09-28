@@ -41,9 +41,13 @@ C_FILES := $(shell find src -type f -name '*.c')
 S_FILES := $(shell find src -type f -name '*.S')
 OBJ_FILES := $(C_FILES:.c=.o) $(S_FILES:.S=.o)
 
+INITRD := initrd.tar
+INITRD_ROOT := build/initrd
+ROOTFS_FILES := $(shell find rootfs -type f)
+
 .PHONY: all clean iso run debug
 
-all: $(KERNEL)
+all: $(KERNEL) $(INITRD)
 
 $(KERNEL): $(OBJ_FILES)
 	$(LD) $(LDFLAGS) $(OBJ_FILES) -o $@
@@ -58,7 +62,16 @@ $(KERNEL): $(OBJ_FILES)
 %.o: %.S
 	$(CC) $(ASFLAGS) -c $< -o $@
 
-iso: $(KERNEL)
+# The initrd is a ustar archive of rootfs/ plus the mount-point directories
+# the kernel attaches other filesystems to. Limine loads it as a module and
+# the kernel mounts it at /.
+$(INITRD): $(ROOTFS_FILES)
+	rm -rf $(INITRD_ROOT)
+	mkdir -p $(INITRD_ROOT)/dev $(INITRD_ROOT)/disk
+	cp -R rootfs/. $(INITRD_ROOT)/
+	tar --format=ustar -cf $@ -C $(INITRD_ROOT) $$(ls $(INITRD_ROOT))
+
+iso: $(KERNEL) $(INITRD)
 	./tools/iso.sh
 
 run: iso
@@ -68,5 +81,5 @@ debug: iso
 	./tools/run.sh --debug
 
 clean:
-	rm -f $(OBJ_FILES) $(KERNEL)
-	rm -rf iso_root atos.iso
+	rm -f $(OBJ_FILES) $(KERNEL) $(INITRD)
+	rm -rf iso_root atos.iso build

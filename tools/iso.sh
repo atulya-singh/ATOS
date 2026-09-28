@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Stages a bootable ISO: kernel.elf + limine.conf + the Limine bootloader
+# Stages a bootable ISO: kernel.elf + initrd.tar + limine.conf + the Limine bootloader
 # binaries, then BIOS-installs the Limine stage1/2 into the ISO itself so
 # it boots under both BIOS and UEFI QEMU.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KERNEL=kernel.elf
+INITRD=initrd.tar
 ISO_ROOT=iso_root
 ISO=atos.iso
 LIMINE_DIR=third_party/limine
 
-if [ ! -f "$KERNEL" ]; then
-    echo "error: $KERNEL not found, run 'make' first" >&2
-    exit 1
-fi
+for f in "$KERNEL" "$INITRD"; do
+    if [ ! -f "$f" ]; then
+        echo "error: $f not found, run 'make' first" >&2
+        exit 1
+    fi
+done
 
 rm -rf "$ISO_ROOT"
 mkdir -p "$ISO_ROOT/boot/limine" "$ISO_ROOT/EFI/BOOT"
 
-cp "$KERNEL" "$ISO_ROOT/boot/"
+cp "$KERNEL" "$INITRD" "$ISO_ROOT/boot/"
 cp limine.conf "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/limine-bios.sys" "$LIMINE_DIR/limine-bios-cd.bin" "$LIMINE_DIR/limine-uefi-cd.bin" \
     "$ISO_ROOT/boot/limine/"

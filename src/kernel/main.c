@@ -10,6 +10,7 @@
 #include "dev/serial.h"
 #include "dev/virtio_blk.h"
 #include "fs/devfs.h"
+#include "fs/initrd.h"
 #include "lib/kprintf.h"
 #include "mm/boot_info.h"
 #include "mm/heap.h"
@@ -35,6 +36,7 @@ static void kmain_stage2(void) {
     selftest_heap();
 
     sched_init();
+    initrd_init();
     devfs_init();
     keyboard_init();
     pci_init();

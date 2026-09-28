@@ -177,7 +177,47 @@ out:
     kprintf("ATOS: vfs self-test %s\n", verdict);
 }
 
+/* Checks the initrd mounted at / against rootfs/ in the repo. */
+static void initrd_self_test(void *arg) {
+    (void)arg;
+    const char *verdict = "ok";
+    struct file *f;
+    struct atos_dirent ent;
+    char buf[64];
+
+    if (vfs_open("/etc/motd", O_RDONLY, &f) != 0) { verdict = "FAILED (open /etc/motd)"; goto out; }
+    int64_t n = vfs_read(f, buf, 16);
+    int64_t n2 = vfs_seek(f, -3, SEEK_END) >= 0 ? vfs_read(f, buf + 16, sizeof(buf) - 16) : -1;
+    int64_t eof = vfs_read(f, buf, 1);
+    struct atos_stat st;
+    vfs_stat(f, &st);
+    file_close(f);
+    if (n != 16 || memcmp(buf, "Welcome to ATOS!", 16) != 0) { verdict = "FAILED (motd contents)"; goto out; }
+    if (n2 != 3 || memcmp(buf + 16, "s.\n", 3) != 0 || eof != 0) { verdict = "FAILED (seek/EOF)"; goto out; }
+    if (st.type != ATOS_TYPE_FILE || st.size < 16) { verdict = "FAILED (stat)"; goto out; }
+
+    if (vfs_open("/", O_RDONLY, &f) != 0) { verdict = "FAILED (open /)"; goto out; }
+    int saw_etc = 0, saw_dev = 0, saw_disk = 0;
+    for (uint64_t i = 0; vfs_readdir(f, i, &ent) == 0; i++) {
+        if (strcmp(ent.name, "etc") == 0 && ent.type == ATOS_TYPE_DIR) saw_etc = 1;
+        if (strcmp(ent.name, "dev") == 0) saw_dev = 1;
+        if (strcmp(ent.name, "disk") == 0) saw_disk = 1;
+    }
+    file_close(f);
+    if (!saw_etc || !saw_dev || !saw_disk) { verdict = "FAILED (readdir /)"; goto out; }
+
+    if (vfs_open("/etc/motd", O_WRONLY, &f) == 0) {
+        n = vfs_write(f, "x", 1);
+        file_close(f);
+        if (n != -EROFS) { verdict = "FAILED (write to read-only initrd)"; goto out; }
+    }
+
+out:
+    kprintf("ATOS: initrd self-test %s\n", verdict);
+}
+
 static void spawn_self_tests(void) {
+    task_create_kernel("initrd-test", initrd_self_test, NULL);
     task_create_kernel("vfs-test", vfs_self_test, NULL);
     task_create_kernel("disk-test", disk_self_test, NULL);
     task_create_kernel("worker-a", worker, "worker-a");
