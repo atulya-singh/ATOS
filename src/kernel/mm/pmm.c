@@ -106,6 +106,29 @@ uint64_t pmm_alloc_page(void) {
     return phys;
 }
 
+uint64_t pmm_alloc_contiguous(uint64_t count) {
+    if (count == 0) return 0;
+    uint64_t flags = irq_save();
+    uint64_t run_start = 0, run_len = 0, phys = 0;
+    for (uint64_t i = 1; i < bitmap_bits; i++) { /* page 0 is never handed out */
+        if (bitmap_test(i)) {
+            run_len = 0;
+            continue;
+        }
+        if (run_len++ == 0) run_start = i;
+        if (run_len == count) {
+            for (uint64_t p = run_start; p < run_start + count; p++) bitmap_set(p);
+            free_pages -= count;
+            phys = run_start * PAGE_SIZE;
+            break;
+        }
+    }
+    irq_restore(flags);
+
+    if (phys) memset(phys_to_virt(phys), 0, count * PAGE_SIZE);
+    return phys;
+}
+
 void pmm_free_page(uint64_t phys) {
     uint64_t flags = irq_save();
     uint64_t idx = phys / PAGE_SIZE;

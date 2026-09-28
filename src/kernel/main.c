@@ -3,16 +3,19 @@
 
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
+#include "dev/block.h"
 #include "dev/fbcon.h"
 #include "dev/keyboard.h"
 #include "dev/pci.h"
 #include "dev/pit.h"
+#include "dev/virtio_blk.h"
 #include "dev/serial.h"
 #include "lib/kprintf.h"
 #include "mm/boot_info.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "lib/string.h"
 #include "sched/sched.h"
 
 __attribute__((used, section(".limine_requests")))
@@ -96,7 +99,61 @@ static void kbd_line_service(void *arg) {
     }
 }
 
+/* Pairs with tools/smoke-test.sh, which writes the signature into sector 0
+ * of a scratch disk.img and, after shutdown, checks the pattern landed on
+ * the host side at DISK_TEST_LBA. 160 sectors crosses the driver's
+ * 128-sector bounce-buffer boundary, so chunking is exercised too. */
+#define DISK_TEST_LBA     64
+#define DISK_TEST_SECTORS 160
+
+static void disk_self_test(void *arg) {
+    (void)arg;
+    struct block_device *dev = block_get("vda");
+    if (!dev) {
+        kprintf("ATOS: disk self-test: no vda, skipped\n");
+        return;
+    }
+
+    size_t bytes = (size_t)DISK_TEST_SECTORS * BLOCK_SECTOR_SIZE;
+    uint8_t *buf = kmalloc(bytes);
+    if (!buf) return;
+
+    const char *verdict = "FAILED";
+    if (block_read(dev, 0, 1, buf) != 0 || memcmp(buf, "ATOSDISK", 8) != 0) {
+        verdict = "FAILED (sector 0 signature)";
+        goto out;
+    }
+
+    for (size_t i = 0; i < bytes; i++) buf[i] = (uint8_t)((i * 7) ^ (i >> 9));
+    if (block_write(dev, DISK_TEST_LBA, DISK_TEST_SECTORS, buf) != 0) {
+        verdict = "FAILED (write)";
+        goto out;
+    }
+    memset(buf, 0, bytes);
+    if (block_read(dev, DISK_TEST_LBA, DISK_TEST_SECTORS, buf) != 0) {
+        verdict = "FAILED (read back)";
+        goto out;
+    }
+    for (size_t i = 0; i < bytes; i++) {
+        if (buf[i] != (uint8_t)((i * 7) ^ (i >> 9))) {
+            verdict = "FAILED (data mismatch)";
+            goto out;
+        }
+    }
+    if (block_read(dev, dev->sector_count, 1, buf) >= 0) {
+        verdict = "FAILED (out-of-range read accepted)";
+        goto out;
+    }
+    verdict = "ok";
+
+out:
+    kprintf("ATOS: disk self-test: signature + %d-sector write/readback %s\n",
+            DISK_TEST_SECTORS, verdict);
+    kfree(buf);
+}
+
 static void spawn_self_tests(void) {
+    task_create_kernel("disk-test", disk_self_test, NULL);
     task_create_kernel("worker-a", worker, "worker-a");
     task_create_kernel("worker-b", worker, "worker-b");
     task_create_kernel("spinner", spinner, NULL);
@@ -118,6 +175,7 @@ static void kmain_stage2(void) {
     sched_init();
     keyboard_init();
     pci_init();
+    virtio_blk_init();
     task_create_kernel("kbd-line", kbd_line_service, NULL);
 
     /* Everything spawned from here on is a self-test that should exit and

@@ -275,6 +275,20 @@ void wait_queue_wake_all(struct wait_queue *wq) {
     irq_restore(flags);
 }
 
+void mutex_lock(struct mutex *m) {
+    uint64_t flags = irq_save();
+    while (m->locked) wait_queue_sleep(&m->waiters);
+    m->locked = 1;
+    irq_restore(flags);
+}
+
+void mutex_unlock(struct mutex *m) {
+    uint64_t flags = irq_save();
+    m->locked = 0;
+    wait_queue_wake_all(&m->waiters);
+    irq_restore(flags);
+}
+
 void task_exit(int code) {
     irq_save();
     kprintf("ATOS: task %lu (%s) exited with code %d\n", current->id, current->name, code);

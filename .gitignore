@@ -9,3 +9,6 @@ iso_root/
 
 # Smoke-test output
 serial.log
+
+# Scratch disk images
+*.img

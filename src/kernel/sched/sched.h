@@ -72,3 +72,13 @@ __attribute__((noreturn)) void task_exit(int code);
 void wait_queue_sleep(struct wait_queue *wq);
 /* Makes every waiter runnable. Safe from IRQ context. */
 void wait_queue_wake_all(struct wait_queue *wq);
+
+/* Sleeping lock for sections that may block or run long (device I/O).
+ * Zero-initialized is unlocked. Task context only: never from an IRQ. */
+struct mutex {
+    int locked;
+    struct wait_queue waiters;
+};
+
+void mutex_lock(struct mutex *m);
+void mutex_unlock(struct mutex *m);
