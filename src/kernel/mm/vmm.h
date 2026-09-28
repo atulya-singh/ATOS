@@ -17,3 +17,23 @@ void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags);
 void vmm_unmap(uint64_t virt);
 int vmm_translate(uint64_t virt, uint64_t *out_phys);
+
+/* Allocates the intermediate tables covering [virt, virt+size) in the
+ * kernel's address space without mapping any leaves, so that later
+ * map/unmap cycles there (e.g. task stacks) never allocate or leak tables. */
+void vmm_prealloc_tables(uint64_t virt, uint64_t size);
+
+/* --- per-process address spaces (identified by their PML4's phys addr) --- */
+
+uint64_t vmm_kernel_cr3(void);
+/* New PML4 sharing the kernel half; returns 0 if out of memory. */
+uint64_t vmm_create_address_space(void);
+/* Maps one 4 KiB user page (VMM_USER is added implicitly). */
+void vmm_map_user(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
+/* Frees every lower-half page and table, then the PML4 itself. The address
+ * space must not be the one currently loaded in CR3. */
+void vmm_destroy_address_space(uint64_t cr3);
+/* True if every byte of [addr, addr+len) is mapped user-accessible (and
+ * writable, if requested) in `cr3` -- how syscalls vet user pointers
+ * before the kernel dereferences them. */
+int vmm_user_range_ok(uint64_t cr3, uint64_t addr, uint64_t len, int need_write);

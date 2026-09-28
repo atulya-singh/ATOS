@@ -1,6 +1,7 @@
 #include "heap.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "../arch/x86_64/cpu.h"
 #include "../lib/kprintf.h"
 
 /* Far above the HHDM range (which only spans actual installed RAM) and the
@@ -56,17 +57,22 @@ static void split_block(struct block_header *b, size_t size) {
     b->size = size;
 }
 
+/* kmalloc/kfree run with interrupts off for the same reason as the PMM:
+ * dead tasks are freed from the timer IRQ. */
 void *kmalloc(size_t size) {
     if (size == 0) return NULL;
     size = align_up(size, ALIGNMENT);
 
+    uint64_t flags = irq_save();
     for (struct block_header *b = heap_head; b; b = b->next) {
         if (b->free && b->size >= size) {
             split_block(b, size);
             b->free = 0;
+            irq_restore(flags);
             return (void *)(b + 1);
         }
     }
+    irq_restore(flags);
 
     kprintf("ATOS: kmalloc: out of heap space (requested %lu bytes)\n", size);
     return NULL;
@@ -81,8 +87,20 @@ static void try_merge(struct block_header *a, struct block_header *b) {
 
 void kfree(void *ptr) {
     if (!ptr) return;
+    uint64_t flags = irq_save();
     struct block_header *b = (struct block_header *)ptr - 1;
     b->free = 1;
     try_merge(b, b->next);
     try_merge(b->prev, b);
+    irq_restore(flags);
+}
+
+size_t heap_free_bytes(void) {
+    uint64_t flags = irq_save();
+    size_t total = 0;
+    for (struct block_header *b = heap_head; b; b = b->next) {
+        if (b->free) total += b->size;
+    }
+    irq_restore(flags);
+    return total;
 }

@@ -2,6 +2,7 @@
 #include "../../dev/pic.h"
 #include "../../dev/pit.h"
 #include "../../lib/kprintf.h"
+#include "../../sched/sched.h"
 
 static const char *const exception_names[32] = {
     "Division By Zero", "Debug", "Non Maskable Interrupt", "Breakpoint",
@@ -14,31 +15,44 @@ static const char *const exception_names[32] = {
     "Security", "Reserved",
 };
 
-/* Every CPU exception (vectors 0-31) lands here. There's no recovery path
- * yet -- that arrives with demand paging / per-process fault isolation in
- * later phases -- so for now we dump full context and halt, which is what
- * makes a triple fault diagnosable instead of a silent reboot loop. */
+static void print_pf_decode(uint64_t err_code, uint64_t cr2) {
+    /* #PF error code bits: every kernel-mode fault today is a genuine bug
+     * (no COW/demand-paging path exists yet), so decoding these is what
+     * makes *which* bug it is obvious. */
+    kprintf(" cr2=%#lx [%s, %s, %s%s%s]", cr2,
+            (err_code & 0x1) ? "protection-violation" : "non-present",
+            (err_code & 0x2) ? "write" : "read",
+            (err_code & 0x4) ? "user-mode" : "supervisor-mode",
+            (err_code & 0x8) ? ", reserved-bit-violation" : "",
+            (err_code & 0x10) ? ", instruction-fetch" : "");
+}
+
+/* Every CPU exception (vectors 0-31) lands here. A fault raised in ring 3
+ * is the user program's problem: only that task dies, and the rest of the
+ * system carries on. A fault in the kernel has no recovery path, so we dump
+ * the full context and halt; that is what makes a triple fault diagnosable
+ * instead of a silent reboot loop. */
 void isr_handler(struct registers *regs) {
     uint64_t cr2 = 0;
     if (regs->int_no == 14) {
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
     }
 
+    if ((regs->cs & 3) == 3) {
+        struct task *t = sched_current();
+        kprintf("ATOS: task %lu (%s) killed: %s at rip=%#lx",
+                t->id, t->name, exception_names[regs->int_no], regs->rip);
+        if (regs->int_no == 14) print_pf_decode(regs->err_code, cr2);
+        kprintf("\n");
+        task_exit(128 + (int)regs->int_no); /* shell-style "killed by" code */
+    }
+
     kprintf("\n--- unhandled exception %lu (%s) ---\n", regs->int_no,
             exception_names[regs->int_no]);
     kprintf("error_code=%#lx", regs->err_code);
-    if (regs->int_no == 14) {
-        /* #PF error code bits: every fault today is a genuine bug (no
-         * COW/demand-paging path exists until processes do in Phase 3+),
-         * so decoding these is what makes *which* bug it is obvious. */
-        kprintf(" cr2=%#lx [%s, %s, %s%s%s]", cr2,
-                (regs->err_code & 0x1) ? "protection-violation" : "non-present",
-                (regs->err_code & 0x2) ? "write" : "read",
-                (regs->err_code & 0x4) ? "user-mode" : "supervisor-mode",
-                (regs->err_code & 0x8) ? ", reserved-bit-violation" : "",
-                (regs->err_code & 0x10) ? ", instruction-fetch" : "");
-    }
-    kprintf("\nrip=%#016lx cs=%#lx rflags=%#lx\n", regs->rip, regs->cs, regs->rflags);
+    if (regs->int_no == 14) print_pf_decode(regs->err_code, cr2);
+    kprintf("\nrip=%#016lx cs=%#lx rflags=%#lx rsp=%#016lx\n",
+            regs->rip, regs->cs, regs->rflags, regs->rsp);
     kprintf("rax=%#016lx rbx=%#016lx rcx=%#016lx rdx=%#016lx\n",
             regs->rax, regs->rbx, regs->rcx, regs->rdx);
     kprintf("rsi=%#016lx rdi=%#016lx rbp=%#016lx\n", regs->rsi, regs->rdi, regs->rbp);
@@ -56,5 +70,10 @@ void irq_handler(struct registers *regs) {
 
     if (irq == 0) pit_tick();
 
+    /* EOI before any task switch: the task we switch to may not come back
+     * through here for a long time, and until the PIC sees EOI it holds
+     * off every further timer interrupt. */
     pic_send_eoi((uint8_t)irq);
+
+    if (irq == 0) sched_tick();
 }

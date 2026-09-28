@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "boot_info.h"
 #include "../lib/kprintf.h"
+#include <stddef.h>
 
 #define PAGE_SIZE_2M   0x200000ULL
 #define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
@@ -12,7 +13,10 @@
 #define KERNEL_STACK_SIZE (64 * 1024)
 static uint8_t kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
 
-static uint64_t *pml4;
+static uint64_t *pml4; /* the kernel's; its upper half is shared by every address space */
+static uint64_t kernel_pml4_phys;
+
+#define USER_HALF_END 0x0000800000000000ULL
 
 extern __attribute__((noreturn)) void vmm_switch_and_continue(uint64_t cr3, uint64_t new_rsp,
                                                                 void (*continuation)(void));
@@ -34,21 +38,21 @@ static uint64_t *walk(uint64_t *table, uint64_t idx) {
     return phys_to_virt(table[idx] & PTE_ADDR_MASK);
 }
 
-static void map_2m(uint64_t virt, uint64_t phys, uint64_t flags) {
-    uint64_t *pdpt = walk(pml4, pml4_index(virt));
+static void map_2m(uint64_t *root, uint64_t virt, uint64_t phys, uint64_t flags) {
+    uint64_t *pdpt = walk(root, pml4_index(virt));
     uint64_t *pd = walk(pdpt, pdpt_index(virt));
     pd[pd_index(virt)] = (phys & ~(PAGE_SIZE_2M - 1)) | flags | PTE_HUGE;
 }
 
-static void map_4k(uint64_t virt, uint64_t phys, uint64_t flags) {
-    uint64_t *pdpt = walk(pml4, pml4_index(virt));
+static void map_4k(uint64_t *root, uint64_t virt, uint64_t phys, uint64_t flags) {
+    uint64_t *pdpt = walk(root, pml4_index(virt));
     uint64_t *pd = walk(pdpt, pdpt_index(virt));
     uint64_t *pt = walk(pd, pd_index(virt));
     pt[pt_index(virt)] = (phys & ~(PAGE_SIZE - 1)) | flags;
 }
 
 void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags) {
-    map_4k(virt, phys, flags);
+    map_4k(pml4, virt, phys, flags);
 }
 
 void vmm_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) {
@@ -56,50 +60,121 @@ void vmm_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) 
     while (virt < end) {
         uint64_t remaining = end - virt;
         if (remaining >= PAGE_SIZE_2M && (virt % PAGE_SIZE_2M) == 0 && (phys % PAGE_SIZE_2M) == 0) {
-            map_2m(virt, phys, flags);
+            map_2m(pml4, virt, phys, flags);
             virt += PAGE_SIZE_2M;
             phys += PAGE_SIZE_2M;
         } else {
-            map_4k(virt, phys, flags);
+            map_4k(pml4, virt, phys, flags);
             virt += PAGE_SIZE;
             phys += PAGE_SIZE;
         }
     }
 }
 
-int vmm_translate(uint64_t virt, uint64_t *out_phys) {
-    if (!(pml4[pml4_index(virt)] & VMM_PRESENT)) return 0;
-    uint64_t *pdpt = phys_to_virt(pml4[pml4_index(virt)] & PTE_ADDR_MASK);
-
-    if (!(pdpt[pdpt_index(virt)] & VMM_PRESENT)) return 0;
-    uint64_t *pd = phys_to_virt(pdpt[pdpt_index(virt)] & PTE_ADDR_MASK);
-
-    if (!(pd[pd_index(virt)] & VMM_PRESENT)) return 0;
-    if (pd[pd_index(virt)] & PTE_HUGE) {
-        *out_phys = (pd[pd_index(virt)] & PTE_ADDR_MASK & ~(PAGE_SIZE_2M - 1)) | (virt & (PAGE_SIZE_2M - 1));
-        return 1;
+void vmm_prealloc_tables(uint64_t virt, uint64_t size) {
+    for (uint64_t v = virt & ~(PAGE_SIZE_2M - 1); v < virt + size; v += PAGE_SIZE_2M) {
+        uint64_t *pdpt = walk(pml4, pml4_index(v));
+        uint64_t *pd = walk(pdpt, pdpt_index(v));
+        walk(pd, pd_index(v));
     }
-    uint64_t *pt = phys_to_virt(pd[pd_index(virt)] & PTE_ADDR_MASK);
+}
 
-    if (!(pt[pt_index(virt)] & VMM_PRESENT)) return 0;
-    *out_phys = (pt[pt_index(virt)] & PTE_ADDR_MASK) | (virt & (PAGE_SIZE - 1));
+/* Returns the leaf entry mapping `virt` in `root` (a PT entry, or a PD
+ * entry for a 2 MiB page), or NULL if some level along the way is absent.
+ * If `all_user` is non-NULL it reports whether every level permits ring 3. */
+static uint64_t *lookup(uint64_t *root, uint64_t virt, int *all_user) {
+    uint64_t user = VMM_USER;
+    uint64_t *table = root;
+    uint64_t idx[3] = {pml4_index(virt), pdpt_index(virt), pd_index(virt)};
+    for (int level = 0; level < 3; level++) {
+        uint64_t e = table[idx[level]];
+        if (!(e & VMM_PRESENT)) return NULL;
+        user &= e;
+        if (level == 2 && (e & PTE_HUGE)) {
+            if (all_user) *all_user = (user & VMM_USER) != 0;
+            return &table[idx[level]];
+        }
+        table = phys_to_virt(e & PTE_ADDR_MASK);
+    }
+    uint64_t *pte = &table[pt_index(virt)];
+    if (!(*pte & VMM_PRESENT)) return NULL;
+    if (all_user) *all_user = (user & *pte & VMM_USER) != 0;
+    return pte;
+}
+
+int vmm_translate(uint64_t virt, uint64_t *out_phys) {
+    uint64_t *pte = lookup(pml4, virt, NULL);
+    if (!pte) return 0;
+    if (*pte & PTE_HUGE)
+        *out_phys = (*pte & PTE_ADDR_MASK & ~(PAGE_SIZE_2M - 1)) | (virt & (PAGE_SIZE_2M - 1));
+    else
+        *out_phys = (*pte & PTE_ADDR_MASK) | (virt & (PAGE_SIZE - 1));
     return 1;
 }
 
 void vmm_unmap(uint64_t virt) {
-    if (!(pml4[pml4_index(virt)] & VMM_PRESENT)) return;
-    uint64_t *pdpt = phys_to_virt(pml4[pml4_index(virt)] & PTE_ADDR_MASK);
-    if (!(pdpt[pdpt_index(virt)] & VMM_PRESENT)) return;
-    uint64_t *pd = phys_to_virt(pdpt[pdpt_index(virt)] & PTE_ADDR_MASK);
-    if (!(pd[pd_index(virt)] & VMM_PRESENT)) return;
-
-    if (pd[pd_index(virt)] & PTE_HUGE) {
-        pd[pd_index(virt)] = 0;
-    } else {
-        uint64_t *pt = phys_to_virt(pd[pd_index(virt)] & PTE_ADDR_MASK);
-        pt[pt_index(virt)] = 0;
-    }
+    uint64_t *pte = lookup(pml4, virt, NULL);
+    if (!pte) return;
+    *pte = 0;
     asm volatile("invlpg (%0)" ::"r"(virt) : "memory");
+}
+
+uint64_t vmm_kernel_cr3(void) {
+    return kernel_pml4_phys;
+}
+
+uint64_t vmm_create_address_space(void) {
+    uint64_t phys = pmm_alloc_page();
+    if (!phys) return 0;
+    uint64_t *root = phys_to_virt(phys);
+    /* Lower half stays empty (pmm pages come back zeroed); upper half points
+     * at the kernel's own PDPTs, which vmm_init() pre-allocated so that no
+     * later kernel mapping can create a PML4 entry this copy would miss. */
+    for (int i = 256; i < 512; i++) root[i] = pml4[i];
+    return phys;
+}
+
+void vmm_map_user(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags) {
+    map_4k(phys_to_virt(cr3), virt, phys, flags | VMM_USER);
+}
+
+void vmm_destroy_address_space(uint64_t cr3) {
+    uint64_t *root = phys_to_virt(cr3);
+    /* Only the lower half belongs to the process; the upper half is the
+     * shared kernel, and freeing it here would pull it out from under
+     * every other address space. */
+    for (int i = 0; i < 256; i++) {
+        if (!(root[i] & VMM_PRESENT)) continue;
+        uint64_t *pdpt = phys_to_virt(root[i] & PTE_ADDR_MASK);
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & VMM_PRESENT)) continue;
+            uint64_t *pd = phys_to_virt(pdpt[j] & PTE_ADDR_MASK);
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & VMM_PRESENT)) continue;
+                uint64_t *pt = phys_to_virt(pd[k] & PTE_ADDR_MASK);
+                for (int l = 0; l < 512; l++) {
+                    if (pt[l] & VMM_PRESENT) pmm_free_page(pt[l] & PTE_ADDR_MASK);
+                }
+                pmm_free_page(pd[k] & PTE_ADDR_MASK);
+            }
+            pmm_free_page(pdpt[j] & PTE_ADDR_MASK);
+        }
+        pmm_free_page(root[i] & PTE_ADDR_MASK);
+    }
+    pmm_free_page(cr3);
+}
+
+int vmm_user_range_ok(uint64_t cr3, uint64_t addr, uint64_t len, int need_write) {
+    if (len == 0) return 1;
+    if (addr + len < addr || addr + len > USER_HALF_END) return 0;
+    uint64_t *root = phys_to_virt(cr3);
+    for (uint64_t page = addr & ~(PAGE_SIZE - 1); page < addr + len; page += PAGE_SIZE) {
+        int all_user;
+        uint64_t *pte = lookup(root, page, &all_user);
+        if (!pte || !all_user) return 0;
+        if (need_write && !(*pte & VMM_WRITABLE)) return 0;
+    }
+    return 1;
 }
 
 /* PTE bit 63 (NX) is a *reserved* bit -- not merely a no-op -- until
@@ -117,6 +192,16 @@ __attribute__((noreturn)) void vmm_init(void (*continuation)(void)) {
 
     uint64_t pml4_phys = pmm_alloc_page();
     pml4 = phys_to_virt(pml4_phys);
+    kernel_pml4_phys = pml4_phys;
+
+    /* Pre-populate every kernel-half PML4 slot (256 pages, 1 MiB). Process
+     * address spaces copy these 256 entries once, at creation; with them
+     * fixed up front, kernel mappings made afterwards (heap, task stacks)
+     * are visible in every address space with no synchronization. No USER
+     * bit at this level: ring 3 can never reach anything beneath it. */
+    for (int i = 256; i < 512; i++) {
+        pml4[i] = pmm_alloc_page() | VMM_PRESENT | VMM_WRITABLE;
+    }
 
     /* Replicate Limine's HHDM: every reported physical range, direct-mapped
      * at hhdm_offset + phys, not executable. This is what every phys_to_virt

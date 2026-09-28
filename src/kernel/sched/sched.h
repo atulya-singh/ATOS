@@ -1,0 +1,56 @@
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+
+enum task_state {
+    TASK_READY,    /* runnable -- including the one currently running */
+    TASK_SLEEPING, /* waiting for pit ticks to reach wake_tick */
+    TASK_ZOMBIE,   /* exited; resources freed by the next schedule() */
+};
+
+struct task {
+    uint64_t id;
+    char name[16];
+    enum task_state state;
+
+    uint64_t rsp;        /* saved kernel RSP while switched out (see switch.S) */
+    uint64_t cr3;        /* physical address of this task's PML4 */
+    uint64_t kstack_top; /* loaded into TSS.rsp0 whenever this task runs */
+    int kstack_slot;     /* -1 for the idle task, which runs on the boot stack */
+
+    uint64_t user_rip, user_rsp; /* ring 3 entry point; unused by kernel threads */
+
+    uint64_t wake_tick;
+    int slice;           /* ticks left in the current time slice */
+
+    struct task *next;   /* circular list of every task, in round-robin order */
+};
+
+/* Turns the currently running boot context into the idle task (id 0),
+ * which runs only when nothing else is runnable. Call once, before the
+ * first task_create and before interrupts are enabled. */
+void sched_init(void);
+
+/* Creates a kernel thread running entry(arg). Returning from entry exits
+ * the thread with code 0. Returns NULL if out of memory. */
+struct task *task_create_kernel(const char *name, void (*entry)(void *), void *arg);
+
+/* Creates a ring-3 task in a fresh address space, with `code` copied to
+ * USER_CODE_BASE (read + execute) and a writable, non-executable stack
+ * below USER_STACK_TOP. `code` must be position-independent. */
+struct task *task_create_user(const char *name, const void *code, size_t code_size);
+
+#define USER_CODE_BASE  0x0000000000400000ULL
+#define USER_STACK_TOP  0x00007FFFFFFFF000ULL
+#define USER_STACK_SIZE (16 * 1024ULL)
+
+struct task *sched_current(void);
+/* Number of tasks that still hold resources (includes idle and unreaped zombies). */
+uint64_t sched_task_count(void);
+
+/* Called from the timer IRQ after EOI; preempts when the slice runs out. */
+void sched_tick(void);
+
+void sched_yield(void);
+void task_sleep(uint64_t ticks);
+__attribute__((noreturn)) void task_exit(int code);

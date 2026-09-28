@@ -39,25 +39,34 @@ ISR_LIST(DECLARE_ISR)
 IRQ_LIST(DECLARE_IRQ)
 #undef DECLARE_IRQ
 
-static void idt_set_gate(uint8_t vector, void (*handler)(void), uint8_t ist) {
+extern void isr128(void);
+
+#define GATE_KERNEL 0x8E /* present, DPL0, 64-bit interrupt gate */
+#define GATE_USER   0xEE /* present, DPL3: `int` from ring 3 is allowed */
+
+static void idt_set_gate(uint8_t vector, void (*handler)(void), uint8_t ist, uint8_t type_attr) {
     uint64_t addr = (uint64_t)handler;
     idt[vector].offset_low  = addr & 0xFFFF;
     idt[vector].selector    = GDT_KERNEL_CODE;
     idt[vector].ist         = ist;
-    idt[vector].type_attr   = 0x8E; /* present, ring0, 64-bit interrupt gate */
+    idt[vector].type_attr   = type_attr;
     idt[vector].offset_mid  = (addr >> 16) & 0xFFFF;
     idt[vector].offset_high = (addr >> 32) & 0xFFFFFFFF;
     idt[vector].zero        = 0;
 }
 
 void idt_init(void) {
-#define SET_ISR(n) idt_set_gate(n, isr##n, (n) == 8 ? 1 : 0);
+#define SET_ISR(n) idt_set_gate(n, isr##n, (n) == 8 ? 1 : 0, GATE_KERNEL);
     ISR_LIST(SET_ISR)
 #undef SET_ISR
 
-#define SET_IRQ(n) idt_set_gate(32 + (n), irq##n, 0);
+#define SET_IRQ(n) idt_set_gate(32 + (n), irq##n, 0, GATE_KERNEL);
     IRQ_LIST(SET_IRQ)
 #undef SET_IRQ
+
+    /* Still an interrupt gate (IF cleared on entry): syscall handlers run
+     * with interrupts off, which is the entire locking story on one CPU. */
+    idt_set_gate(SYSCALL_VECTOR, isr128, 0, GATE_USER);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;

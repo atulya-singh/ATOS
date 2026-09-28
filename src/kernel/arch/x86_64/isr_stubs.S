@@ -78,8 +78,19 @@ IRQ 13, 45
 IRQ 14, 46
 IRQ 15, 47
 
+/* int 0x80 system call entry. Same frame shape as every other vector, so
+ * the handler can read arguments from and write the return value into
+ * struct registers, and iretq hands the result back to ring 3 in %rax. */
+.global isr128
+.type isr128, @function
+isr128:
+    push $0
+    push $128
+    jmp syscall_common_stub
+
 .extern isr_handler
 .extern irq_handler
+.extern syscall_handler
 
 /* Pushes struct registers (see idt.h) in the exact field order, calls the
  * C handler with %rsp (post-push) as its single argument, then restores
@@ -131,5 +142,6 @@ IRQ 15, 47
 
 COMMON_STUB isr_common_stub, isr_handler
 COMMON_STUB irq_common_stub, irq_handler
+COMMON_STUB syscall_common_stub, syscall_handler
 
 .section .note.GNU-stack,"",@progbits

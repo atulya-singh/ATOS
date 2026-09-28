@@ -1,5 +1,6 @@
 #include "pmm.h"
 #include "boot_info.h"
+#include "../arch/x86_64/cpu.h"
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
 
@@ -86,24 +87,33 @@ void pmm_init(void) {
             (unsigned long)total_pages);
 }
 
+/* Both entry points run with interrupts off: the scheduler frees a dead
+ * task's pages from the timer IRQ, which may land mid-allocation. */
 uint64_t pmm_alloc_page(void) {
+    uint64_t flags = irq_save();
+    uint64_t phys = 0;
     for (uint64_t i = 0; i < bitmap_bits; i++) {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             free_pages--;
-            uint64_t phys = i * PAGE_SIZE;
-            memset(phys_to_virt(phys), 0, PAGE_SIZE);
-            return phys;
+            phys = i * PAGE_SIZE;
+            break;
         }
     }
-    return 0;
+    irq_restore(flags);
+
+    if (phys) memset(phys_to_virt(phys), 0, PAGE_SIZE); /* page is ours now */
+    return phys;
 }
 
 void pmm_free_page(uint64_t phys) {
+    uint64_t flags = irq_save();
     uint64_t idx = phys / PAGE_SIZE;
-    if (idx >= bitmap_bits || !bitmap_test(idx)) return; /* bad addr / double free */
-    bitmap_clear(idx);
-    free_pages++;
+    if (idx < bitmap_bits && bitmap_test(idx)) { /* else bad addr / double free */
+        bitmap_clear(idx);
+        free_pages++;
+    }
+    irq_restore(flags);
 }
 
 uint64_t pmm_total_pages(void) { return total_pages; }

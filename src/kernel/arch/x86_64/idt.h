@@ -9,6 +9,9 @@ struct registers {
     uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
     uint64_t int_no, err_code;
     uint64_t rip, cs, rflags;
+    uint64_t rsp, ss; /* long mode always pushes these, even for ring0->ring0 */
 } __attribute__((packed));
+
+#define SYSCALL_VECTOR 0x80
 
 void idt_init(void);

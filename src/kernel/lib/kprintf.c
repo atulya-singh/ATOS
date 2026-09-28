@@ -1,4 +1,5 @@
 #include "kprintf.h"
+#include "../arch/x86_64/cpu.h"
 #include "../dev/serial.h"
 #include <stdarg.h>
 #include <stdint.h>
@@ -37,6 +38,9 @@ static void print_int(long long value) {
 }
 
 void kprintf(const char *fmt, ...) {
+    /* Whole-message atomicity: without this, a timer preemption mid-call
+     * interleaves two tasks' output character by character. */
+    uint64_t flags = irq_save();
     va_list args;
     va_start(args, fmt);
 
@@ -111,4 +115,5 @@ void kprintf(const char *fmt, ...) {
     }
 
     va_end(args);
+    irq_restore(flags);
 }
