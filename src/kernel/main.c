@@ -5,6 +5,7 @@
 #include "arch/x86_64/idt.h"
 #include "dev/fbcon.h"
 #include "dev/keyboard.h"
+#include "dev/pci.h"
 #include "dev/pit.h"
 #include "dev/serial.h"
 #include "lib/kprintf.h"
@@ -116,6 +117,7 @@ static void kmain_stage2(void) {
 
     sched_init();
     keyboard_init();
+    pci_init();
     task_create_kernel("kbd-line", kbd_line_service, NULL);
 
     /* Everything spawned from here on is a self-test that should exit and
