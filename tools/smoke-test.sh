@@ -138,6 +138,7 @@ check "(user-hello) exited with code 42"
 check "(user-fault) killed: Page Fault"
 check "(user-spin) exited with code 7"
 check "all tasks reaped cleanly"
+check "self-test summary: 6 passed, 0 failed"
 check "vfs: hello through /dev/console"
 check "vfs self-test ok"
 check "initrd self-test ok"
@@ -222,24 +223,38 @@ if [ $status -ne 0 ]; then
     cat "$LOG"
 fi
 
-# Crash tests: boot a kernel told (via its command line) to crash on
-# purpose, and check the panic report names the right functions.
-crash_boot() { # crash_boot <kind>
-    local conf=smoke-crash.conf log=smoke-crash.log
-    printf 'timeout: 0\n/ATOS crash test\n    protocol: limine\n    kernel_path: boot():/boot/kernel.elf\n    module_path: boot():/boot/initrd.tar\n    cmdline: crashtest=%s\n' "$1" > "$conf"
-    ISO=smoke-crash.iso ISO_ROOT=smoke-crash-root LIMINE_CONF=$conf ./tools/iso.sh >/dev/null 2>&1
+# Variant boots: the same kernel and initrd, with a different kernel
+# command line. boot_variant waits for QEMU to exit (or for the log to show
+# a halted system), leaving the log in $LOG and QEMU's status in $VSTATUS.
+boot_variant() { # boot_variant <cmdline> [extra qemu args...]
+    local conf=smoke-variant.conf log=smoke-variant.log cmdline=$1
+    shift
+    printf 'timeout: 0\n/ATOS variant\n    protocol: limine\n    kernel_path: boot():/boot/kernel.elf\n    module_path: boot():/boot/initrd.tar\n    cmdline: %s\n' "$cmdline" > "$conf"
+    ISO=smoke-variant.iso ISO_ROOT=smoke-variant-root LIMINE_CONF=$conf ./tools/iso.sh >/dev/null 2>&1
     rm -f "$log"
     qemu-system-x86_64 -M q35 -m 256M -display none -no-reboot \
-        -serial "file:$log" -cdrom smoke-crash.iso 2>/dev/null &
+        -serial "file:$log" -cdrom smoke-variant.iso "$@" 2>/dev/null &
     local pid=$!
-    for _ in $(seq 1 150); do
-        grep -qF -- "--- system halted ---" "$log" 2>/dev/null && break
+    VSTATUS=timeout
+    for _ in $(seq 1 300); do
+        if ! kill -0 $pid 2>/dev/null; then
+            VSTATUS=0
+            wait $pid || VSTATUS=$?
+            break
+        fi
+        if grep -qF -- "--- system halted ---" "$log" 2>/dev/null; then
+            VSTATUS=halted
+            kill $pid 2>/dev/null || true
+            wait $pid 2>/dev/null || true
+            break
+        fi
         sleep 0.2
     done
-    kill $pid 2>/dev/null || true
-    wait $pid 2>/dev/null || true
+    [ "$VSTATUS" = timeout ] && { kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; }
     LOG=$log
 }
+crash_boot() { boot_variant "crashtest=$1"; }
+
 crash_status=$status
 status=0
 crash_boot pagefault
@@ -271,6 +286,15 @@ check "assertion failed: value == 42 (src/kernel/crashtest.c:"
 check_re "\] crash_assert\+0x"
 check "--- system halted ---"
 [ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+# Headless self-test mode: QEMU's exit status is the verdict (1 = pass).
+boot_variant selftest-exit -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+    -drive "file=$DISK,format=raw,if=none,id=disk0" -device virtio-blk-pci,drive=disk0,disable-legacy=off
+check "self-test summary: 6 passed, 0 failed"
+if [ "$VSTATUS" = 1 ]; then echo "PASS  selftest-exit: QEMU exit status 1"; else echo "FAIL  selftest-exit: QEMU exit status $VSTATUS"; status=1; fi
+check_absent "self-tests done, starting /bin/init"
+[ $status -ne 0 ] && cat "$LOG"
 status=$(( crash_status | status ))
-rm -rf smoke-crash.conf smoke-crash.iso smoke-crash-root smoke-crash.log
+rm -rf smoke-variant.conf smoke-variant.iso smoke-variant-root smoke-variant.log
 exit $status

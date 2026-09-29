@@ -14,7 +14,9 @@
 #include "fs/devfs.h"
 #include "fs/fat.h"
 #include "fs/initrd.h"
+#include "lib/io.h"
 #include "lib/kprintf.h"
+#include "lib/string.h"
 #include "mm/boot_info.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
@@ -31,6 +33,26 @@ static volatile LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
+
+/* Whether the kernel command line contains `word` as a whole word. */
+static int cmdline_has(const char *cmdline, const char *word) {
+    size_t n = strlen(word);
+    for (const char *p = cmdline; *p; p++) {
+        if ((p == cmdline || p[-1] == ' ') && memcmp(p, word, n) == 0 &&
+            (p[n] == ' ' || p[n] == '\0')) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* QEMU's isa-debug-exit device (-device isa-debug-exit,iobase=0xf4) ends
+ * the emulator with status (code << 1) | 1: 1 for pass, 3 for fail.
+ * Without the device, the write does nothing and we just halt. */
+static void qemu_debug_exit(int code) {
+    outl(0xF4, (uint32_t)code);
+    for (;;) asm volatile("cli; hlt");
+}
 
 /* Mounts the first block device holding FAT32 at /disk. */
 static void mount_disk(void) {
@@ -56,6 +78,9 @@ static void kmain_stage2(void) {
     mount_disk();
     selftest_spawn();
     crashtest_start(boot_info_cmdline());
+    /* "selftest-exit": a headless CI run. Instead of starting userspace,
+     * leave QEMU with the self-test verdict as its exit status. */
+    int selftest_exit = cmdline_has(boot_info_cmdline(), "selftest-exit");
 
     pit_init(100);
     kprintf("ATOS: PIT timer at 100 Hz\n");
@@ -72,6 +97,7 @@ static void kmain_stage2(void) {
     for (;;) {
         asm volatile("hlt");
         if (selftest_poll() && !init_started) {
+            if (selftest_exit) qemu_debug_exit(selftest_failures() ? 1 : 0);
             static const char *const init_argv[] = {"/bin/init"};
             kprintf("ATOS: self-tests done, starting /bin/init\n");
             process_spawn("/bin/init", 1, init_argv);

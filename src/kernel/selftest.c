@@ -8,9 +8,16 @@
 #include "mm/pmm.h"
 #include "sched/sched.h"
 
-/* Boot-time self-tests. Each prints one success line that
- * tools/smoke-test.sh (and so CI) greps for; none of them are throwaway
- * debug code. */
+/* Boot-time self-tests. Each prints one result line that
+ * tools/smoke-test.sh (and so CI) greps for, and all of them feed one
+ * summary line -- the headless pass/fail signal. None of them are
+ * throwaway debug code. */
+
+static int tests_passed, tests_failed;
+
+static void record(int ok) {
+    __atomic_add_fetch(ok ? &tests_passed : &tests_failed, 1, __ATOMIC_SEQ_CST);
+}
 
 /* Exercises split + coalesce so a broken heap shows up as wrong numbers
  * on every boot, not just when someone happens to stress it later. */
@@ -27,8 +34,10 @@ void selftest_heap(void) {
     kfree(d);
 
     uint64_t free_after = pmm_free_page_count();
-    kprintf("ATOS: heap self-test: alloc/free/coalesce ok (pmm free pages %lu -> %lu)\n",
-            free_before, free_after);
+    int ok = d == b && free_before == free_after;
+    record(ok);
+    kprintf("ATOS: heap self-test: alloc/free/coalesce %s (pmm free pages %lu -> %lu)\n",
+            ok ? "ok" : "FAILED", free_before, free_after);
 }
 
 /* --- Phase 3 boot-time self-tests: multitasking + user mode --- */
@@ -59,6 +68,7 @@ static void spinner(void *arg) {
         asm volatile("pause");
     }
     uint64_t others = worker_progress - progress_before;
+    record(others != 0);
     kprintf("ATOS: preemption %s: workers ran %lu times while spinner held the CPU for 40 ticks\n",
             others ? "ok" : "FAILED", others);
 }
@@ -113,6 +123,7 @@ static void disk_self_test(void *arg) {
     verdict = "ok";
 
 out:
+    record(strcmp(verdict, "ok") == 0);
     kprintf("ATOS: disk self-test: signature + %d-sector write/readback %s\n",
             DISK_TEST_SECTORS, verdict);
     kfree(buf);
@@ -155,6 +166,7 @@ static void vfs_self_test(void *arg) {
     if (vfs_open("relative", O_RDONLY, &f) != -ENOENT) { verdict = "FAILED (relative path)"; goto out; }
 
 out:
+    record(strcmp(verdict, "ok") == 0);
     kprintf("ATOS: vfs self-test %s\n", verdict);
 }
 
@@ -194,6 +206,7 @@ static void initrd_self_test(void *arg) {
     }
 
 out:
+    record(strcmp(verdict, "ok") == 0);
     kprintf("ATOS: initrd self-test %s\n", verdict);
 }
 
@@ -224,6 +237,10 @@ void selftest_spawn(void) {
     spawn_self_tests();
 }
 
+int selftest_failures(void) {
+    return tests_failed;
+}
+
 int selftest_poll(void) {
     if (reaped_reported) return 1;
     if (sched_task_count() != baseline_tasks) return 0;
@@ -231,9 +248,11 @@ int selftest_poll(void) {
      * task struct should be back where it came from. */
     uint64_t pmm_after = pmm_free_page_count();
     uint64_t heap_after = heap_free_bytes();
+    int clean = pmm_after == pmm_before && heap_after == heap_before;
+    record(clean);
     kprintf("ATOS: sched self-test: all tasks reaped %s (pmm free pages %lu -> %lu, heap free bytes %lu -> %lu)\n",
-            (pmm_after == pmm_before && heap_after == heap_before) ? "cleanly" : "WITH LEAKS",
-            pmm_before, pmm_after, heap_before, heap_after);
+            clean ? "cleanly" : "WITH LEAKS", pmm_before, pmm_after, heap_before, heap_after);
+    kprintf("ATOS: self-test summary: %d passed, %d failed\n", tests_passed, tests_failed);
     reaped_reported = 1;
     return 1;
 }
