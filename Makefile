@@ -104,15 +104,16 @@ ROOTFS_FILES := $(shell find rootfs -type f)
 # freestanding) with ASan + UBSan and run as an ordinary program.
 HOST_CC ?= cc
 HOST_TEST_KERNEL_SRCS := src/kernel/mm/heap_core.c src/kernel/lib/path.c \
-                         src/kernel/fs/fat_names.c src/kernel/fs/tar.c src/kernel/lib/kprintf.c
+                         src/kernel/fs/fat_names.c src/kernel/fs/tar.c src/kernel/lib/kprintf.c \
+                         src/kernel/net/inet.c ports/grep/regex.c
 HOST_TEST_SRCS := $(wildcard tests/host/*.c)
 HOST_TEST_BIN := build/host/run-tests
 
 $(HOST_TEST_BIN): $(HOST_TEST_SRCS) $(HOST_TEST_KERNEL_SRCS) $(wildcard tests/host/*.h)
 	@mkdir -p $(dir $@)
-	$(HOST_CC) -std=gnu11 -g -O1 -Wall -Wextra -DATOS_HOST_TEST \
+	$(HOST_CC) -std=gnu11 -g -O1 -Wall -Wextra -DATOS_HOST_TEST -pthread \
 		-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-I src/kernel -I include $(HOST_TEST_SRCS) $(HOST_TEST_KERNEL_SRCS) -o $@
+		-I src/kernel -I include -I ports $(HOST_TEST_SRCS) $(HOST_TEST_KERNEL_SRCS) -o $@
 
 test-host: $(HOST_TEST_BIN)
 	./$(HOST_TEST_BIN)

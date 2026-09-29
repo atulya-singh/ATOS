@@ -2,16 +2,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../sched/sched.h"
+#include "inet.h"
 
 /* A small IPv4 stack: Ethernet, ARP, IPv4 (no fragmentation), ICMP echo,
  * UDP, and TCP, over one network interface. All protocol state is guarded
  * by net_lock; the "net" kernel thread polls the NIC and runs the timers,
  * and socket syscalls take the lock from their own task. See docs/net.md. */
-
-static inline uint16_t htons(uint16_t v) { return __builtin_bswap16(v); }
-static inline uint16_t ntohs(uint16_t v) { return __builtin_bswap16(v); }
-static inline uint32_t htonl(uint32_t v) { return __builtin_bswap32(v); }
-static inline uint32_t ntohl(uint32_t v) { return __builtin_bswap32(v); }
 
 #define ETH_ALEN       6
 #define ETH_HLEN       14
@@ -53,16 +49,6 @@ struct netif *net_interface(void);
 void net_init(void);
 /* Called by a driver's poll with net_lock held. */
 void net_receive(struct netif *nif, const void *frame, size_t len);
-
-/* The Internet checksum (RFC 1071) of `len` bytes, continuing a running
- * sum; checksum_finish folds and complements it. */
-uint32_t checksum_add(uint32_t sum, const void *data, size_t len);
-uint16_t checksum_finish(uint32_t sum);
-/* The TCP/UDP pseudo-header's contribution. */
-uint32_t checksum_pseudo(uint32_t src, uint32_t dst, uint8_t proto, uint16_t len);
-
-/* Parses dotted-quad text into a network-order address; 0 on success. */
-int ip_parse(const char *s, uint32_t *out);
 
 /* --- layers, all called with net_lock held --- */
 
