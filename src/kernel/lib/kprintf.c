@@ -31,7 +31,8 @@ static void print_uint(unsigned long long value, unsigned base, int uppercase,
 static void print_int(long long value) {
     if (value < 0) {
         console_putc('-');
-        print_uint((unsigned long long)(-value), 10, 0, 0, 0);
+        /* Negate as unsigned: -LLONG_MIN doesn't fit in a long long. */
+        print_uint(0ULL - (unsigned long long)value, 10, 0, 0, 0);
     } else {
         print_uint((unsigned long long)value, 10, 0, 0, 0);
     }
@@ -55,6 +56,10 @@ void kvprintf(const char *fmt, va_list args) {
             continue;
         }
         p++;
+        if (!*p) { /* lone '%' at the end: print it, don't run off the string */
+            console_putc('%');
+            break;
+        }
 
         int alt = 0, zero_pad = 0, width = 0;
         if (*p == '#') { alt = 1; p++; }

@@ -1,10 +1,10 @@
 #include "vfs.h"
 #include "../lib/kprintf.h"
+#include "../lib/path.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
 #include "../sched/sched.h"
 
-#define VFS_PATH_MAX 256
 #define MAX_MOUNTS 8
 
 static struct {
@@ -24,40 +24,9 @@ void vnode_release(struct vnode *vn) {
     }
 }
 
-/* Rewrites an absolute path into canonical form: no empty or "."
- * components, ".." applied lexically (and clamped at the root), no
- * trailing slash except for "/" itself. There is no working directory
- * yet, so relative paths are rejected. */
-static int normalize(const char *path, char *out) {
-    if (path[0] != '/') return -ENOENT;
-    size_t len = 0;
-    const char *p = path;
-    while (*p) {
-        while (*p == '/') p++;
-        const char *start = p;
-        while (*p && *p != '/') p++;
-        size_t clen = (size_t)(p - start);
-
-        if (clen == 0 || (clen == 1 && start[0] == '.')) continue;
-        if (clen == 2 && start[0] == '.' && start[1] == '.') {
-            while (len > 0 && out[len - 1] != '/') len--;
-            if (len > 0) len--; /* drop the slash too */
-            continue;
-        }
-        if (clen >= ATOS_NAME_MAX) return -ENAMETOOLONG;
-        if (len + 1 + clen >= VFS_PATH_MAX) return -ENAMETOOLONG;
-        out[len++] = '/';
-        memcpy(out + len, start, clen);
-        len += clen;
-    }
-    if (len == 0) out[len++] = '/';
-    out[len] = '\0';
-    return 0;
-}
-
 int vfs_mount(const char *path, struct vnode *root) {
     if (mount_count == MAX_MOUNTS) return -ENOMEM;
-    int err = normalize(path, mounts[mount_count].path);
+    int err = path_normalize(path, mounts[mount_count].path);
     if (err) return err;
     mounts[mount_count].len = strlen(mounts[mount_count].path);
     mounts[mount_count].root = root;
@@ -109,7 +78,7 @@ static int resolve(const char *norm, struct vnode **out) {
 
 int vfs_lookup(const char *path, struct vnode **out) {
     char norm[VFS_PATH_MAX];
-    int err = normalize(path, norm);
+    int err = path_normalize(path, norm);
     if (err) return err;
     return resolve(norm, out);
 }
@@ -138,7 +107,7 @@ static int create_at(const char *norm, struct vnode **out) {
 
 int vfs_open(const char *path, int flags, struct file **out) {
     char norm[VFS_PATH_MAX];
-    int err = normalize(path, norm);
+    int err = path_normalize(path, norm);
     if (err) return err;
 
     struct vnode *vn;

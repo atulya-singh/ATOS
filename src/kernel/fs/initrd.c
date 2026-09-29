@@ -1,4 +1,5 @@
 #include "initrd.h"
+#include "tar.h"
 #include "vfs.h"
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
@@ -10,31 +11,6 @@ static volatile struct limine_module_request module_request = {
     .id = LIMINE_MODULE_REQUEST,
     .revision = 0,
 };
-
-struct tar_header {
-    char name[100];
-    char mode[8];
-    char uid[8];
-    char gid[8];
-    char size[12];
-    char mtime[12];
-    char checksum[8];
-    char typeflag;
-    char linkname[100];
-    char magic[6]; /* "ustar\0" (POSIX) or "ustar " (old GNU) */
-    char version[2];
-    char uname[32];
-    char gname[32];
-    char devmajor[8];
-    char devminor[8];
-    char prefix[155];
-    char pad[12];
-} __attribute__((packed));
-
-#define TAR_BLOCK 512
-#define TAR_TYPE_FILE  '0'
-#define TAR_TYPE_AFILE '\0' /* pre-POSIX regular file */
-#define TAR_TYPE_DIR   '5'
 
 /* One file or directory. `vn` comes first so a vnode pointer converts
  * straight back to its node. Nodes are never freed: the initrd lives as
@@ -49,24 +25,6 @@ struct tnode {
 static const struct vnode_ops file_ops;
 static const struct vnode_ops dir_ops;
 static struct tnode root;
-
-static uint64_t parse_octal(const char *s, size_t n) {
-    uint64_t v = 0;
-    for (size_t i = 0; i < n && s[i] >= '0' && s[i] <= '7'; i++) v = v * 8 + (uint64_t)(s[i] - '0');
-    return v;
-}
-
-static int checksum_ok(const struct tar_header *h) {
-    /* Sum of all header bytes, with the checksum field counted as spaces. */
-    const uint8_t *b = (const uint8_t *)h;
-    uint64_t sum = 0;
-    for (size_t i = 0; i < TAR_BLOCK; i++) {
-        int in_field = i >= offsetof(struct tar_header, checksum) &&
-                       i < offsetof(struct tar_header, checksum) + sizeof(h->checksum);
-        sum += in_field ? ' ' : b[i];
-    }
-    return sum == parse_octal(h->checksum, sizeof(h->checksum));
-}
 
 static struct tnode *find_child(struct tnode *dir, const char *name, size_t len) {
     for (struct tnode *c = dir->children; c; c = c->sibling) {
@@ -129,12 +87,12 @@ static unsigned parse_archive(const uint8_t *base, uint64_t size) {
     while (off + TAR_BLOCK <= size) {
         const struct tar_header *h = (const struct tar_header *)(base + off);
         if (h->name[0] == '\0') break; /* end-of-archive zero block */
-        if (memcmp(h->magic, "ustar", 5) != 0 || !checksum_ok(h)) {
+        if (memcmp(h->magic, "ustar", 5) != 0 || !tar_checksum_ok(h)) {
             kprintf("ATOS: initrd: corrupt header at offset %lu, stopping\n", off);
             break;
         }
 
-        uint64_t fsize = parse_octal(h->size, sizeof(h->size));
+        uint64_t fsize = tar_parse_octal(h->size, sizeof(h->size));
         const uint8_t *data = base + off + TAR_BLOCK;
         if (off + TAR_BLOCK + fsize > size) {
             kprintf("ATOS: initrd: truncated entry at offset %lu, stopping\n", off);

@@ -1,4 +1,5 @@
 #include "fat.h"
+#include "fat_names.h"
 #include "vfs.h"
 #include "../dev/block.h"
 #include "../dev/rtc.h"
@@ -62,8 +63,6 @@ struct raw_dirent {
 #define ATTR_ARCHIVE   0x20
 #define ATTR_LFN       0x0F
 
-#define NTRES_LOWER_BASE 0x08
-#define NTRES_LOWER_EXT  0x10
 
 #define DIRENT_END     0x00
 #define DIRENT_DELETED 0xE5
@@ -172,35 +171,6 @@ static int read_cluster(struct fat_fs *fs, uint32_t cluster, void *buf) {
     return block_read(fs->dev, cluster_lba(fs, cluster), fs->sectors_per_cluster, buf);
 }
 
-static char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
-
-static int name_eq_nocase(const char *a, const char *b) {
-    while (*a && lower(*a) == lower(*b)) a++, b++;
-    return *a == *b;
-}
-
-/* "FOO     TXT" -> "FOO.TXT" (or "foo.txt" per the NT case flags). */
-static void short_name(const struct raw_dirent *d, char *out) {
-    size_t n = 0;
-    for (int i = 0; i < 8 && d->name[i] != ' '; i++) {
-        out[n++] = (d->ntres & NTRES_LOWER_BASE) ? lower(d->name[i]) : d->name[i];
-    }
-    if (d->name[8] != ' ') {
-        out[n++] = '.';
-        for (int i = 8; i < 11 && d->name[i] != ' '; i++) {
-            out[n++] = (d->ntres & NTRES_LOWER_EXT) ? lower(d->name[i]) : d->name[i];
-        }
-    }
-    out[n] = '\0';
-    if (out[0] == 0x05) out[0] = (char)0xE5; /* escaped first byte */
-}
-
-static uint8_t short_name_checksum(const char name[11]) {
-    uint8_t sum = 0;
-    for (int i = 0; i < 11; i++) sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + (uint8_t)name[i]);
-    return sum;
-}
-
 /* Byte offsets of the 13 UCS-2 characters inside a VFAT long-name entry. */
 static const uint8_t lfn_char_offsets[LFN_CHARS_PER_ENTRY] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
 
@@ -262,13 +232,13 @@ static int dir_iterate(struct fat_fs *fs, uint32_t dir_cluster,
                 continue;
             }
 
-            if (lfn_pieces && lfn_checksum == short_name_checksum(d->name) && lfn[0]) {
+            if (lfn_pieces && lfn_checksum == fat_name_checksum(d->name) && lfn[0]) {
                 size_t len = strnlen(lfn, sizeof(lfn));
                 if (len >= ATOS_NAME_MAX) len = ATOS_NAME_MAX - 1;
                 memcpy(e.name, lfn, len);
                 e.name[len] = '\0';
             } else {
-                short_name(d, e.name);
+                fat_name_decode(d->name, d->ntres, e.name);
             }
             lfn_pieces = 0;
             if (strcmp(e.name, ".") == 0 || strcmp(e.name, "..") == 0) continue;
@@ -337,7 +307,7 @@ struct lookup_ctx {
 
 static int lookup_visit(void *ctx, const struct entry *e) {
     struct lookup_ctx *lc = ctx;
-    if (!name_eq_nocase(e->name, lc->name)) return 0;
+    if (!fat_name_eq(e->name, lc->name)) return 0;
     lc->found = *e;
     return 1;
 }
@@ -474,9 +444,8 @@ static int free_chain(struct fat_fs *fs, uint32_t c) {
 static void stamp_dirent(struct raw_dirent *d, int created) {
     struct rtc_time t;
     rtc_read(&t);
-    uint16_t year = t.year < 1980 ? 0 : (uint16_t)(t.year - 1980);
-    uint16_t date = (uint16_t)((year << 9) | (t.month << 5) | t.day);
-    uint16_t time = (uint16_t)((t.hour << 11) | (t.minute << 5) | (t.second / 2));
+    uint16_t date = fat_encode_date(t.year, t.month, t.day);
+    uint16_t time = fat_encode_time(t.hour, t.minute, t.second);
     d->mdate = d->adate = date;
     d->mtime = time;
     if (created) {
@@ -620,75 +589,6 @@ static int fat_truncate(struct vnode *vn, uint64_t size) {
     return err;
 }
 
-/* Characters an 8.3 name may hold (after upper-casing). */
-static int short_char_ok(char c) {
-    if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return 1;
-    return c && strchr("$%'-_@~`!(){}^#&", c);
-}
-
-static char upper(char c) { return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c; }
-
-/* Fills an 11-byte 8.3 name if `name` is exactly representable as one,
- * using the NT flags for an all-lowercase base and/or extension. Mixed
- * case, long parts, or odd characters need a long-name entry instead. */
-static int exact_short_name(const char *name, char out[11], uint8_t *ntres) {
-    const char *dot = strrchr(name, '.');
-    size_t len = strlen(name);
-    size_t base_len = dot ? (size_t)(dot - name) : len;
-    size_t ext_len = dot ? len - base_len - 1 : 0;
-    if (base_len < 1 || base_len > 8 || ext_len > 3 || (dot && ext_len == 0)) return 0;
-
-    memset(out, ' ', 11);
-    int lower_seen[2] = {0, 0}, upper_seen[2] = {0, 0};
-    for (size_t i = 0; i < len; i++) {
-        if (name + i == dot) continue;
-        int part = dot && name + i > dot;
-        char c = name[i];
-        if (c >= 'a' && c <= 'z') lower_seen[part] = 1;
-        if (c >= 'A' && c <= 'Z') upper_seen[part] = 1;
-        c = upper(c);
-        if (!short_char_ok(c)) return 0;
-        out[part ? 8 + (size_t)(name + i - dot - 1) : i] = c;
-    }
-    if ((lower_seen[0] && upper_seen[0]) || (lower_seen[1] && upper_seen[1])) return 0;
-    *ntres = (uint8_t)((lower_seen[0] ? NTRES_LOWER_BASE : 0) | (lower_seen[1] ? NTRES_LOWER_EXT : 0));
-    return 1;
-}
-
-/* The "BASIS~N.EXT" alias every long name also needs. */
-static void alias_short_name(const char *name, unsigned n, char out[11]) {
-    memset(out, ' ', 11);
-    const char *dot = strrchr(name, '.');
-    if (dot == name) dot = NULL;
-    const char *base_end = dot ? dot : name + strlen(name);
-
-    char tail[12];
-    size_t tl = 0;
-    char digits[10];
-    size_t nd = 0;
-    do digits[nd++] = (char)('0' + n % 10); while (n /= 10);
-    tail[tl++] = '~';
-    while (nd) tail[tl++] = digits[--nd];
-
-    size_t bl = 0;
-    for (const char *p = name; p < base_end && bl < 8 - tl; p++) {
-        if (*p == ' ' || *p == '.') continue;
-        char c = upper(*p);
-        out[bl++] = short_char_ok(c) ? c : '_';
-    }
-    if (bl == 0) out[bl++] = '_';
-    memcpy(out + bl, tail, tl);
-
-    if (dot) {
-        size_t el = 0;
-        for (const char *p = dot + 1; *p && el < 3; p++) {
-            if (*p == ' ' || *p == '.') continue;
-            char c = upper(*p);
-            out[8 + el++] = short_char_ok(c) ? c : '_';
-        }
-    }
-}
-
 /* Whether an 8.3 name is already taken in the directory. */
 static int short_name_taken(struct fat_fs *fs, uint32_t dir_cluster, const char name[11], int *err) {
     uint32_t c = dir_cluster;
@@ -755,22 +655,10 @@ static int write_slot(struct fat_fs *fs, const struct slot *s, const void *entry
     return write_cluster(fs, s->cluster, fs->cluster_buf);
 }
 
-static int long_name_ok(const char *name) {
-    size_t len = strlen(name);
-    if (len == 0 || len >= ATOS_NAME_MAX) return 0;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
-    if (name[len - 1] == ' ' || name[len - 1] == '.') return 0; /* Windows can't open these */
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)name[i];
-        if (c < 0x20 || c >= 0x7F || strchr("\\/:*?\"<>|", (char)c)) return 0;
-    }
-    return 1;
-}
-
 static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
     struct fat_node *d = (struct fat_node *)dir;
     struct fat_fs *fs = d->fs;
-    if (!long_name_ok(name)) return -EINVAL;
+    if (!fat_name_valid(name)) return -EINVAL;
 
     mutex_lock(&fs->lock);
     struct lookup_ctx lc = {.name = name};
@@ -781,13 +669,13 @@ static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
     struct raw_dirent entry;
     memset(&entry, 0, sizeof(entry));
     unsigned lfn_entries = 0;
-    if (!exact_short_name(name, entry.name, &entry.ntres) ||
+    if (!fat_name_exact(name, entry.name, &entry.ntres) ||
         short_name_taken(fs, d->first_cluster, entry.name, &err)) {
         if (err) goto out;
         entry.ntres = 0;
         unsigned n = 1;
         for (;; n++) {
-            alias_short_name(name, n, entry.name);
+            fat_name_alias(name, n, entry.name);
             if (!short_name_taken(fs, d->first_cluster, entry.name, &err)) break;
             if (err) goto out;
             if (n == 999999) { err = -EEXIST; goto out; }
@@ -800,7 +688,7 @@ static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
     if (err) goto out;
 
     /* Long-name pieces go last-piece-first, then the 8.3 entry itself. */
-    uint8_t checksum = short_name_checksum(entry.name);
+    uint8_t checksum = fat_name_checksum(entry.name);
     size_t len = strlen(name);
     for (unsigned i = 0; i < lfn_entries; i++) {
         unsigned piece = lfn_entries - i;
