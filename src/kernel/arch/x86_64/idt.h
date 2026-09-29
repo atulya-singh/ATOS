@@ -12,11 +12,20 @@ struct registers {
     uint64_t rsp, ss; /* long mode always pushes these, even for ring0->ring0 */
 } __attribute__((packed));
 
-#define SYSCALL_VECTOR 0x80
+/* Interrupt vectors. 32-47 are "IRQ" stubs: 32 is each CPU's LAPIC timer,
+ * and 32 + n is ISA IRQ n (1-15) once routed through the I/O APIC. */
+#define VEC_IRQ_BASE      32
+#define VEC_TIMER         32
+#define VEC_TLB_SHOOTDOWN 0xF0
+#define VEC_SPURIOUS      0xFF
+#define SYSCALL_VECTOR    0x80
 
+/* Builds the IDT and loads it on the calling (bootstrap) CPU. */
 void idt_init(void);
+/* Loads the already-built IDT; for application processors. */
+void idt_load(void);
 
-/* Routes PIC line `irq` (0-15) to `handler` and unmasks it. The handler
- * runs in interrupt context before EOI; keep it short and don't block.
- * IRQ0 (the timer) is wired internally and can't be replaced. */
+/* Routes ISA IRQ `irq` (1-15) to `handler`, via the I/O APIC to the
+ * bootstrap CPU. The handler runs in interrupt context before EOI; keep
+ * it short and don't block. */
 void irq_install_handler(uint8_t irq, void (*handler)(void));

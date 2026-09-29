@@ -1,6 +1,9 @@
 #include "idt.h"
-#include "../../dev/pic.h"
-#include "../../dev/pit.h"
+#include "ioapic.h"
+#include "lapic.h"
+#include "percpu.h"
+#include "smp.h"
+#include "../../dev/timer.h"
 #include "../../lib/kprintf.h"
 #include "../../lib/panic.h"
 #include "../../sched/sched.h"
@@ -33,6 +36,11 @@ static void print_pf_decode(uint64_t err_code, uint64_t cr2) {
  * system carries on. A fault in the kernel has no recovery path: panic with
  * the full context and a backtrace. */
 void isr_handler(struct registers *regs) {
+    /* The only NMIs ATOS sends are panic()'s "stop now" to the other CPUs. */
+    if (regs->int_no == 2 && panic_in_progress()) {
+        for (;;) asm volatile("cli; hlt");
+    }
+
     uint64_t cr2 = 0;
     if (regs->int_no == 14) {
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
@@ -54,20 +62,27 @@ static void (*irq_handlers[16])(void);
 
 void irq_install_handler(uint8_t irq, void (*handler)(void)) {
     irq_handlers[irq] = handler;
-    if (irq >= 8) pic_clear_mask(2); /* slave PIC reaches the CPU via IRQ2 */
-    pic_clear_mask(irq);
+    ioapic_route_isa_irq(irq, (uint8_t)(VEC_IRQ_BASE + irq), cpus[0].apic_id);
 }
 
+/* Every hardware interrupt and IPI lands here (see idt.h for vectors). */
 void irq_handler(struct registers *regs) {
-    uint64_t irq = regs->int_no - 32;
+    uint64_t vector = regs->int_no;
 
-    if (irq == 0) pit_tick();
-    else if (irq_handlers[irq]) irq_handlers[irq]();
-
-    /* EOI before any task switch: the task we switch to may not come back
-     * through here for a long time, and until the PIC sees EOI it holds
-     * off every further timer interrupt. */
-    pic_send_eoi((uint8_t)irq);
-
-    if (irq == 0) sched_tick();
+    if (vector == VEC_TIMER) {
+        /* EOI before any task switch: the task we switch to may not come
+         * back through here for a long time, and until the LAPIC sees EOI
+         * it holds off every further timer interrupt. */
+        lapic_eoi();
+        timer_tick();
+        sched_tick();
+        return;
+    }
+    if (vector == VEC_TLB_SHOOTDOWN) {
+        tlb_shootdown_ipi();
+    } else {
+        uint64_t irq = vector - VEC_IRQ_BASE;
+        if (irq < 16 && irq_handlers[irq]) irq_handlers[irq]();
+    }
+    lapic_eoi();
 }

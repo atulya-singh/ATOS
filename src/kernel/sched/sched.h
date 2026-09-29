@@ -1,18 +1,19 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../arch/x86_64/cpu.h"
 #include "../fs/vfs.h"
 
 enum task_state {
-    TASK_READY,    /* runnable -- including the one currently running */
-    TASK_SLEEPING, /* waiting for pit ticks to reach wake_tick */
+    TASK_READY,    /* runnable -- including while running on some CPU */
+    TASK_SLEEPING, /* waiting for timer ticks to reach wake_tick */
     TASK_BLOCKED,  /* parked on a wait_queue until something wakes it */
-    TASK_ZOMBIE,   /* exited; stack and memory freed by the next schedule() */
+    TASK_ZOMBIE,   /* exited; its stack and memory not yet freed by the reaper */
     TASK_DEAD,     /* resources freed; struct kept only for a parent's waitpid */
 };
 
-/* A list of tasks blocked on some event (input arriving, I/O finishing).
- * Zero-initialized is empty. */
+/* A set of tasks blocked on some event (input arriving, a lock freeing
+ * up). Zero-initialized is empty. See wait_event. */
 struct wait_queue {
     struct task *head;
 };
@@ -25,7 +26,14 @@ struct task {
     uint64_t rsp;        /* saved kernel RSP while switched out (see switch.S) */
     uint64_t cr3;        /* physical address of this task's PML4 */
     uint64_t kstack_top; /* loaded into TSS.rsp0 whenever this task runs */
-    int kstack_slot;     /* -1 for the idle task, which runs on the boot stack */
+    int kstack_slot;     /* -1 for the BSP's idle task, which runs on the boot stack */
+
+    /* Set while some CPU is running this task, or still standing on its
+     * stack mid-switch; no other CPU may pick it (or free it) until the
+     * switch away has completed. */
+    int on_cpu;
+    int is_idle;         /* a per-CPU idle task: never on the run list */
+    int reaping;         /* the reaper is freeing this zombie's resources */
 
     uint64_t user_rip, user_rsp; /* ring 3 entry point; unused by kernel threads */
     uint64_t brk_start, brk;     /* process heap: [brk_start, brk), grown by sys_brk */
@@ -41,16 +49,21 @@ struct task {
      * children, which are then freed as soon as they exit. */
     struct task *parent;
     int exit_code;
+    uint64_t child_events;       /* bumped whenever a child exits */
     struct wait_queue child_exited;
 
-    struct task *next;   /* circular list of every task, in round-robin order */
-    struct task *wait_next; /* link while parked on a wait_queue */
+    struct task *next;           /* circular run list of every non-idle task */
+    struct wait_queue *waiting_on;
+    struct task *wait_next;      /* link while parked on a wait_queue */
 };
 
-/* Turns the currently running boot context into the idle task (id 0),
- * which runs only when nothing else is runnable. Call once, before the
- * first task_create and before interrupts are enabled. */
+/* Turns the running boot context into CPU 0's idle task (id 0) and starts
+ * the reaper thread. Call once, before the first task_create. */
 void sched_init(void);
+
+/* An idle task for CPU `cpu_index`, with its own stack but no entry point:
+ * the AP moves onto that stack and becomes the task itself. */
+struct task *task_create_idle(unsigned cpu_index);
 
 /* Creates a kernel thread running entry(arg). Returning from entry exits
  * the thread with code 0. Returns NULL if out of memory. */
@@ -89,25 +102,51 @@ void task_open_console_fds(struct task *t);
 #define USER_STACK_TOP  0x00007FFFFFFFF000ULL
 #define USER_STACK_SIZE (16 * 1024ULL)
 
-struct task *sched_current(void);
+/* The task running on the calling CPU. */
+static inline struct task *sched_current(void) {
+    struct task *t;
+    asm volatile("mov %%gs:8, %0" : "=r"(t)); /* struct cpu's `current` */
+    return t;
+}
+
 void task_set_name(struct task *t, const char *name);
-/* Number of tasks that still hold resources (includes idle and unreaped zombies). */
+/* Number of tasks that still hold resources (includes idle tasks and
+ * tasks the reaper hasn't freed yet). */
 uint64_t sched_task_count(void);
 
-/* Called from the timer IRQ after EOI; preempts when the slice runs out. */
+/* Called from each CPU's timer interrupt after EOI; preempts when the
+ * slice runs out. */
 void sched_tick(void);
 
 void sched_yield(void);
 void task_sleep(uint64_t ticks);
 __attribute__((noreturn)) void task_exit(int code);
 
-/* Blocks the current task on `wq` until wait_queue_wake_all. Call with
- * interrupts disabled, *after* re-checking the condition under that same
- * disabled section: that ordering is what rules out a lost wakeup when
- * the event fires between the check and the sleep. Returns with
- * interrupts still disabled; callers loop, since waking is a hint and
- * the condition may already be consumed again. */
-void wait_queue_sleep(struct wait_queue *wq);
+/* Called by every task right after it is switched to for the first time
+ * (task_trampoline, fork_return); see schedule(). */
+void sched_finish_switch(void);
+
+/* --- blocking ---
+ * The race-free way to sleep until `cond` holds: register as a waiter
+ * *before* the final check of the condition, so a wakeup that lands in
+ * between turns the sleep into a no-op instead of being lost. Interrupts
+ * stay off on this CPU throughout, so a timer tick can't put the task to
+ * sleep while it is registered but has already seen the condition hold.
+ * `cond` must become true only before a wait_queue_wake_all on `wq`. */
+#define wait_event(wq, cond)                     \
+    do {                                         \
+        uint64_t wait_flags_ = irq_save();       \
+        while (!(cond)) {                        \
+            wait_prepare(wq);                    \
+            if (!(cond)) wait_sleep();           \
+            wait_finish(wq);                     \
+        }                                        \
+        irq_restore(wait_flags_);                \
+    } while (0)
+
+void wait_prepare(struct wait_queue *wq);
+void wait_sleep(void);
+void wait_finish(struct wait_queue *wq);
 /* Makes every waiter runnable. Safe from IRQ context. */
 void wait_queue_wake_all(struct wait_queue *wq);
 

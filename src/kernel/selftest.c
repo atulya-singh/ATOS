@@ -1,8 +1,10 @@
 #include "selftest.h"
 #include "dev/block.h"
-#include "dev/pit.h"
+#include "dev/timer.h"
 #include "fs/vfs.h"
+#include "arch/x86_64/percpu.h"
 #include "lib/kprintf.h"
+#include "lib/spinlock.h"
 #include "lib/string.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
@@ -51,8 +53,8 @@ static volatile uint64_t worker_progress;
 static void worker(void *arg) {
     const char *tag = arg;
     for (int i = 1; i <= 5; i++) {
-        kprintf("ATOS: [%s] iteration %d at tick=%lu\n", tag, i, pit_get_ticks());
-        worker_progress++;
+        kprintf("ATOS: [%s] iteration %d at tick=%lu\n", tag, i, timer_ticks());
+        __atomic_add_fetch(&worker_progress, 1, __ATOMIC_RELAXED);
         task_sleep(5);
     }
 }
@@ -62,9 +64,9 @@ static void worker(void *arg) {
  * spins, preemption works. */
 static void spinner(void *arg) {
     (void)arg;
-    uint64_t start = pit_get_ticks();
+    uint64_t start = timer_ticks();
     uint64_t progress_before = worker_progress;
-    while (pit_get_ticks() - start < 40) {
+    while (timer_ticks() - start < 40) {
         asm volatile("pause");
     }
     uint64_t others = worker_progress - progress_before;
@@ -210,7 +212,59 @@ out:
     kprintf("ATOS: initrd self-test %s\n", verdict);
 }
 
+/* --- SMP: many tasks, spread over every CPU, hammering one spinlock and
+ * one mutex. Any hole in either lock (or in the scheduler handing tasks
+ * between CPUs) shows up as lost increments. */
+
+#define SMP_WORKERS    8
+#define SMP_ITERATIONS 20000
+
+static struct spinlock smp_spin;
+static struct mutex smp_mutex;
+static uint64_t smp_spin_count, smp_mutex_count;
+static uint32_t smp_cpus_seen; /* bitmask of CPU indexes any worker ran on */
+static uint32_t smp_workers_done;
+
+static void smp_worker(void *arg) {
+    (void)arg;
+    for (int i = 0; i < SMP_ITERATIONS; i++) {
+        __atomic_or_fetch(&smp_cpus_seen, 1u << this_cpu()->index, __ATOMIC_RELAXED);
+        uint64_t flags = spin_lock_irqsave(&smp_spin);
+        uint64_t v = smp_spin_count; /* a deliberately non-atomic update */
+        smp_spin_count = v + 1;
+        spin_unlock_irqrestore(&smp_spin, flags);
+
+        if (i % 50 == 0) {
+            mutex_lock(&smp_mutex);
+            uint64_t m = smp_mutex_count;
+            if (i % 1000 == 0) sched_yield(); /* block others on the mutex */
+            smp_mutex_count = m + 1;
+            mutex_unlock(&smp_mutex);
+        }
+    }
+    __atomic_add_fetch(&smp_workers_done, 1, __ATOMIC_RELEASE);
+}
+
+static void smp_self_test(void *arg) {
+    (void)arg;
+    for (int i = 0; i < SMP_WORKERS; i++) task_create_kernel("smp-worker", smp_worker, NULL);
+    while (__atomic_load_n(&smp_workers_done, __ATOMIC_ACQUIRE) < SMP_WORKERS) task_sleep(2);
+
+    uint64_t want_spin = (uint64_t)SMP_WORKERS * SMP_ITERATIONS;
+    uint64_t want_mutex = (uint64_t)SMP_WORKERS * (SMP_ITERATIONS / 50);
+    unsigned seen = 0; /* no libgcc for __builtin_popcount */
+    for (uint32_t m = smp_cpus_seen; m; m &= m - 1) seen++;
+    /* With several CPUs, work must actually have spread across them. */
+    int ok = smp_spin_count == want_spin && smp_mutex_count == want_mutex &&
+             (cpu_count == 1 || seen > 1);
+    record(ok);
+    kprintf("ATOS: smp self-test %s: %lu/%lu spinlocked and %lu/%lu mutexed increments, workers ran on %u of %u CPU(s)\n",
+            ok ? "ok" : "FAILED", smp_spin_count, want_spin, smp_mutex_count, want_mutex, seen,
+            cpu_count);
+}
+
 static void spawn_self_tests(void) {
+    task_create_kernel("smp-test", smp_self_test, NULL);
     task_create_kernel("initrd-test", initrd_self_test, NULL);
     task_create_kernel("vfs-test", vfs_self_test, NULL);
     task_create_kernel("disk-test", disk_self_test, NULL);

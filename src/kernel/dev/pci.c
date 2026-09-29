@@ -1,5 +1,5 @@
 #include "pci.h"
-#include "../arch/x86_64/cpu.h"
+#include "../lib/spinlock.h"
 #include "../lib/io.h"
 #include "../lib/kprintf.h"
 #include <stddef.h>
@@ -25,24 +25,26 @@ static struct pci_device devices[MAX_PCI_DEVICES];
 static unsigned device_count;
 
 /* The address/data port pair is one shared register window, so a config
- * access must not be split by an interrupt that does its own access. */
+ * access must not be split by another CPU's (or an interrupt's) access. */
+static struct spinlock config_lock;
+
 static uint32_t config_read(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset) {
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) | ((uint32_t)dev << 11)
                   | ((uint32_t)func << 8) | (offset & 0xFC);
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&config_lock);
     outl(PCI_CONFIG_ADDRESS, addr);
     uint32_t v = inl(PCI_CONFIG_DATA);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&config_lock, flags);
     return v;
 }
 
 static void config_write(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset, uint32_t value) {
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) | ((uint32_t)dev << 11)
                   | ((uint32_t)func << 8) | (offset & 0xFC);
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&config_lock);
     outl(PCI_CONFIG_ADDRESS, addr);
     outl(PCI_CONFIG_DATA, value);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&config_lock, flags);
 }
 
 uint32_t pci_read32(const struct pci_device *d, uint8_t offset) {

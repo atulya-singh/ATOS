@@ -15,7 +15,7 @@ if [ ! -f "$DISK" ]; then
 fi
 
 # disable-legacy=off: the driver speaks the legacy virtio PCI interface.
-QEMU_FLAGS=(-M q35 -m 256M -serial stdio -no-reboot -no-shutdown -cdrom "$ISO"
+QEMU_FLAGS=(-M q35 -smp 4 -m 256M -serial stdio -no-reboot -cdrom "$ISO"
             -drive "file=$DISK,format=raw,if=none,id=disk0"
             -device virtio-blk-pci,drive=disk0,disable-legacy=off)
 

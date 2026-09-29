@@ -4,14 +4,18 @@
 #include "acpi/acpi.h"
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
+#include "arch/x86_64/ioapic.h"
+#include "arch/x86_64/lapic.h"
+#include "arch/x86_64/percpu.h"
+#include "arch/x86_64/smp.h"
 #include "crashtest.h"
 #include "dev/block.h"
 #include "dev/fbcon.h"
 #include "dev/keyboard.h"
 #include "dev/pci.h"
-#include "dev/pit.h"
 #include "dev/rtc.h"
 #include "dev/serial.h"
+#include "dev/timer.h"
 #include "dev/virtio_blk.h"
 #include "fs/devfs.h"
 #include "fs/fat.h"
@@ -19,6 +23,7 @@
 #include "lib/cmdline.h"
 #include "lib/io.h"
 #include "lib/kprintf.h"
+#include "lib/panic.h"
 #include "mm/boot_info.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
@@ -62,6 +67,14 @@ static void kmain_stage2(void) {
     acpi_init();
     rtc_set_century_register(acpi_rtc_century_register());
 
+    /* Interrupt routing moves from the legacy PICs to the APICs. */
+    const struct acpi_madt_info *madt = acpi_madt();
+    if (!madt || madt->ioapic_count == 0) panic("no ACPI MADT with a local APIC and an I/O APIC");
+    lapic_init(madt->lapic_addr);
+    lapic_enable_cpu();
+    cpus[0].apic_id = lapic_id();
+    ioapic_init();
+
     sched_init();
     initrd_init();
     devfs_init();
@@ -69,6 +82,10 @@ static void kmain_stage2(void) {
     pci_init();
     virtio_blk_init();
     mount_disk();
+
+    lapic_timer_calibrate(TIMER_HZ);
+    smp_init();
+
     selftest_spawn();
     crashtest_start();
     /* "selftest-exit": a headless CI run. Instead of starting userspace,
@@ -78,8 +95,7 @@ static void kmain_stage2(void) {
     static char init_path[64] = "/bin/init";
     cmdline_get("init", init_path, sizeof(init_path));
 
-    pit_init(100);
-    kprintf("ATOS: PIT timer at 100 Hz\n");
+    lapic_timer_start();
 
     /* Printed before sti: from the first tick on, idle only gets the CPU
      * once every other task is asleep or gone. */
@@ -96,7 +112,7 @@ static void kmain_stage2(void) {
             if (selftest_exit) qemu_debug_exit(selftest_failures() ? 1 : 0);
             const char *init_argv[] = {init_path};
             kprintf("ATOS: self-tests done, starting %s\n", init_path);
-            if (process_spawn(init_path, 1, init_argv) < 0) {
+            if (!process_spawn(init_path, 1, init_argv)) {
                 kprintf("ATOS: could not start %s\n", init_path);
             }
             init_started = 1;
@@ -105,7 +121,7 @@ static void kmain_stage2(void) {
         /* Liveness heartbeat, only until userspace owns the console:
          * after that the shell prompt is the proof of life, and kernel
          * chatter would land in the middle of the user's typing. */
-        uint64_t t = pit_get_ticks();
+        uint64_t t = timer_ticks();
         if (!init_started && t - last_reported >= 500) {
             kprintf("ATOS: tick=%lu (alive)\n", t);
             last_reported = t;
@@ -114,6 +130,7 @@ static void kmain_stage2(void) {
 }
 
 void kmain(void) {
+    percpu_set(&cpus[0]); /* before anything that might take a spinlock */
     serial_init();
     fbcon_init();
     kprintf("ATOS: booting...\n");

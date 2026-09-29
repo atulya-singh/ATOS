@@ -40,12 +40,14 @@ context_switch:
 
 /* The first "return" of a brand-new task lands here. task_create_kernel
  * pre-loads %rbx with the entry function and %r12 with its argument,
- * through the register slots context_switch pops. The task starts with
- * interrupts disabled (schedule() always runs that way), so it re-enables
- * them before running any code of its own. */
+ * through the register slots context_switch pops. Like every task that
+ * gets switched to, it inherits the scheduler lock from the task switched
+ * away from, with interrupts off: sched_finish_switch releases the lock,
+ * and only then may interrupts come back on. */
 .global task_trampoline
 .type task_trampoline, @function
 task_trampoline:
+    call sched_finish_switch
     sti
     mov %r12, %rdi
     call *%rbx
@@ -53,11 +55,14 @@ task_trampoline:
     call task_exit /* noreturn */
 
 /* First switch-in of a forked child (see task_fork): %rsp points at a copy
- * of the parent's struct registers syscall frame. Unwind it the way
- * isr_stubs.S's COMMON_STUB does, and iretq into user mode. */
+ * of the parent's struct registers syscall frame (whose size keeps %rsp
+ * 16-byte aligned for the call). Release the scheduler lock, unwind the
+ * frame the way isr_stubs.S's COMMON_STUB does, and iretq into user mode,
+ * swapping in the user GS base on the way. */
 .global fork_return
 .type fork_return, @function
 fork_return:
+    call sched_finish_switch
     pop %rax
     pop %rbx
     pop %rcx
@@ -74,6 +79,7 @@ fork_return:
     pop %r14
     pop %r15
     add $16, %rsp /* int_no + err_code */
+    swapgs        /* the frame always returns to ring 3 */
     iretq
 
 /* void jump_to_user(uint64_t rip, uint64_t rsp) -- drops to ring 3 by
@@ -110,6 +116,7 @@ jump_to_user:
     xor %r13d, %r13d
     xor %r14d, %r14d
     xor %r15d, %r15d
+    swapgs /* kernel GS base out, user GS base in (see isr_stubs.S) */
     iretq
 
 .section .note.GNU-stack,"",@progbits

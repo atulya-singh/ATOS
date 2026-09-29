@@ -12,6 +12,9 @@ __attribute__((noreturn, format(printf, 1, 2))) void panic(const char *fmt, ...)
 __attribute__((noreturn)) void panic_exception(const struct registers *regs, const char *what,
                                                uint64_t cr2);
 
+/* Whether some CPU has started panicking (the others are being stopped). */
+int panic_in_progress(void);
+
 /* Prints the call chain starting at `rip`, following saved frame pointers
  * from `rbp`. Safe on a corrupted stack: stops at the first frame that
  * isn't mapped kernel memory or doesn't move up the stack. */

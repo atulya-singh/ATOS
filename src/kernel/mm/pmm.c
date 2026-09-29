@@ -1,6 +1,6 @@
 #include "pmm.h"
 #include "boot_info.h"
-#include "../arch/x86_64/cpu.h"
+#include "../lib/spinlock.h"
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
 
@@ -9,6 +9,8 @@
 
 static uint8_t *bitmap;      /* HHDM-mapped */
 static uint64_t bitmap_bits; /* one bit per physical page below highest_addr */
+
+static struct spinlock pmm_lock;
 
 static uint64_t total_pages;
 static uint64_t free_pages;
@@ -87,10 +89,11 @@ void pmm_init(void) {
             (unsigned long)total_pages);
 }
 
-/* Both entry points run with interrupts off: the scheduler frees a dead
- * task's pages from the timer IRQ, which may land mid-allocation. */
+/* All entry points take pmm_lock (with interrupts off, so that no
+ * interrupt handler can ever deadlock against an allocation it landed in
+ * the middle of). */
 uint64_t pmm_alloc_page(void) {
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&pmm_lock);
     uint64_t phys = 0;
     for (uint64_t i = 0; i < bitmap_bits; i++) {
         if (!bitmap_test(i)) {
@@ -100,7 +103,7 @@ uint64_t pmm_alloc_page(void) {
             break;
         }
     }
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
 
     if (phys) memset(phys_to_virt(phys), 0, PAGE_SIZE); /* page is ours now */
     return phys;
@@ -108,7 +111,7 @@ uint64_t pmm_alloc_page(void) {
 
 uint64_t pmm_alloc_contiguous(uint64_t count) {
     if (count == 0) return 0;
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&pmm_lock);
     uint64_t run_start = 0, run_len = 0, phys = 0;
     for (uint64_t i = 1; i < bitmap_bits; i++) { /* page 0 is never handed out */
         if (bitmap_test(i)) {
@@ -123,20 +126,20 @@ uint64_t pmm_alloc_contiguous(uint64_t count) {
             break;
         }
     }
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
 
     if (phys) memset(phys_to_virt(phys), 0, count * PAGE_SIZE);
     return phys;
 }
 
 void pmm_free_page(uint64_t phys) {
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&pmm_lock);
     uint64_t idx = phys / PAGE_SIZE;
     if (idx < bitmap_bits && bitmap_test(idx)) { /* else bad addr / double free */
         bitmap_clear(idx);
         free_pages++;
     }
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
 uint64_t pmm_total_pages(void) { return total_pages; }

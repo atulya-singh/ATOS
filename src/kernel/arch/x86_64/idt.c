@@ -40,6 +40,8 @@ IRQ_LIST(DECLARE_IRQ)
 #undef DECLARE_IRQ
 
 extern void isr128(void);
+extern void vector_tlb_shootdown(void);
+extern void vector_spurious(void);
 
 #define GATE_KERNEL 0x8E /* present, DPL0, 64-bit interrupt gate */
 #define GATE_USER   0xEE /* present, DPL3: `int` from ring 3 is allowed */
@@ -64,17 +66,24 @@ void idt_init(void) {
     IRQ_LIST(SET_IRQ)
 #undef SET_IRQ
 
-    /* Still an interrupt gate (IF cleared on entry): syscall handlers run
-     * with interrupts off, which is the entire locking story on one CPU. */
+    idt_set_gate(VEC_TLB_SHOOTDOWN, vector_tlb_shootdown, 0, GATE_KERNEL);
+    idt_set_gate(VEC_SPURIOUS, vector_spurious, 0, GATE_KERNEL);
+
+    /* An interrupt gate (IF cleared on entry); syscall_handler turns
+     * interrupts back on once it is safely on the kernel stack. */
     idt_set_gate(SYSCALL_VECTOR, isr128, 0, GATE_USER);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;
-    idt_flush((uint64_t)&idtr);
+    idt_load();
 
+    /* The legacy PICs are retired in favor of the LAPIC and I/O APIC, but
+     * still remapped away from the exception vectors (and fully masked),
+     * so a stray spurious interrupt from them can't pose as a CPU fault. */
     pic_remap();
-    /* Mask every IRQ line until its driver is ready; only the timer (IRQ0)
-     * is wired up so far. */
     for (int i = 0; i < 16; i++) pic_set_mask((uint8_t)i);
-    pic_clear_mask(0);
+}
+
+void idt_load(void) {
+    idt_flush((uint64_t)&idtr);
 }

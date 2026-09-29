@@ -1,5 +1,6 @@
 #include "keyboard.h"
-#include "../arch/x86_64/cpu.h"
+#include "../lib/ring.h"
+#include "../lib/spinlock.h"
 #include "../arch/x86_64/idt.h"
 #include "../lib/io.h"
 #include "../lib/kprintf.h"
@@ -35,22 +36,18 @@ static const char keymap_shift[128] = {
 #define SC_EXTENDED 0xE0
 #define SC_RELEASE  0x80
 
-/* Single-producer (IRQ) / single-consumer ring buffer; one slot is kept
- * empty to tell full from empty. When full, new keys are dropped rather
- * than overwriting ones the reader hasn't seen yet. */
-#define QUEUE_SIZE 256
-static char queue[QUEUE_SIZE];
-static volatile unsigned head, tail;
+/* Scancodes become bytes in a lock-free ring: the IRQ handler (always on
+ * the bootstrap CPU) is its single producer; readers, on any CPU, take
+ * reader_lock to act as its single consumer. A full ring drops new keys
+ * rather than overwriting ones the reader hasn't seen yet. */
+static struct spsc_ring queue;
+static struct spinlock reader_lock;
 static struct wait_queue readers;
 
 static int shift, ctrl, capslock, extended;
 
 static void enqueue(char c) {
-    unsigned next = (head + 1) % QUEUE_SIZE;
-    if (next == tail) return;
-    queue[head] = c;
-    head = next;
-    wait_queue_wake_all(&readers);
+    if (ring_push(&queue, (uint8_t)c)) wait_queue_wake_all(&readers);
 }
 
 static void keyboard_irq(void) {
@@ -89,21 +86,16 @@ void keyboard_init(void) {
 }
 
 int keyboard_try_getc(void) {
-    uint64_t flags = irq_save();
-    int c = -1;
-    if (tail != head) {
-        c = (unsigned char)queue[tail];
-        tail = (tail + 1) % QUEUE_SIZE;
-    }
-    irq_restore(flags);
+    uint64_t flags = spin_lock_irqsave(&reader_lock);
+    int c = ring_pop(&queue);
+    spin_unlock_irqrestore(&reader_lock, flags);
     return c;
 }
 
 char keyboard_getc(void) {
-    uint64_t flags = irq_save();
-    while (tail == head) wait_queue_sleep(&readers);
-    char c = queue[tail];
-    tail = (tail + 1) % QUEUE_SIZE;
-    irq_restore(flags);
-    return c;
+    for (;;) {
+        int c = keyboard_try_getc();
+        if (c >= 0) return (char)c;
+        wait_event(&readers, !ring_empty(&queue));
+    }
 }

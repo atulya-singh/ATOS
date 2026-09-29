@@ -1,7 +1,11 @@
 #include "panic.h"
 #include "kprintf.h"
 #include "ksyms.h"
+#include "spinlock.h"
 #include "../arch/x86_64/idt.h"
+#include "../arch/x86_64/percpu.h"
+#include "../arch/x86_64/smp.h"
+#include "../dev/console.h"
 #include "../dev/fbcon.h"
 #include "../mm/vmm.h"
 #include "../sched/sched.h"
@@ -58,21 +62,38 @@ void backtrace_print(uint64_t rip, uint64_t rbp) {
     print_repeats(repeats);
 }
 
-/* Once a panic starts, nothing else may run or print: interrupts off, and
- * a second panic (say, a fault while printing) just stops. */
+int panic_in_progress(void) {
+    return __atomic_load_n(&panicking, __ATOMIC_ACQUIRE) != 0;
+}
+
+/* Once a panic starts, nothing else may run or print: interrupts off here,
+ * every other CPU stopped with an NMI, and a second panic (say, a fault
+ * while printing, or a racing panic on another CPU) just stops. */
 static void panic_begin(void) {
     asm volatile("cli");
-    if (panicking) {
-        kprintf("\n--- nested panic, halting ---\n");
-        for (;;) asm volatile("hlt");
+    int me = (int)this_cpu()->index + 1, none = 0;
+    if (!__atomic_compare_exchange_n(&panicking, &none, me, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (panicking == me) {
+            console_lock.locked = 0;
+            kprintf("\n--- nested panic, halting ---\n");
+        }
+        for (;;) asm volatile("cli; hlt");
     }
-    panicking = 1;
+    smp_halt_others();
+    /* A stopped CPU may have died holding the console lock. */
+    console_lock.owner = 0;
+    console_lock.locked = 0;
     fbcon_panic_screen();
     kprintf("\n*** ATOS KERNEL PANIC ***\n");
 }
 
+void spinlock_recursion(struct spinlock *l) {
+    panic("spinlock %p taken twice by CPU %u", (void *)l, this_cpu()->index);
+}
+
 static __attribute__((noreturn)) void panic_end(void) {
     struct task *t = sched_current();
+    kprintf("cpu: %u of %u\n", this_cpu()->index, cpu_count);
     if (t) kprintf("task: %lu (%s)\n", t->id, t->name);
     kprintf("--- system halted ---\n");
     for (;;) asm volatile("cli; hlt");

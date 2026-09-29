@@ -78,6 +78,20 @@ IRQ 13, 45
 IRQ 14, 46
 IRQ 15, 47
 
+/* TLB shootdown IPI from another CPU (see smp.c). */
+.global vector_tlb_shootdown
+.type vector_tlb_shootdown, @function
+vector_tlb_shootdown:
+    push $0
+    push $0xF0
+    jmp irq_common_stub
+
+/* LAPIC spurious interrupt: no handler work and, per the SDM, no EOI. */
+.global vector_spurious
+.type vector_spurious, @function
+vector_spurious:
+    iretq
+
 /* int 0x80 system call entry. Same frame shape as every other vector, so
  * the handler can read arguments from and write the return value into
  * struct registers, and iretq hands the result back to ring 3 in %rax. */
@@ -95,9 +109,18 @@ isr128:
 /* Pushes struct registers (see idt.h) in the exact field order, calls the
  * C handler with %rsp (post-push) as its single argument, then restores
  * and irets. %rsp is realigned to 16 bytes across the call since the CPU
- * doesn't guarantee stack alignment at the point an interrupt lands. */
+ * doesn't guarantee stack alignment at the point an interrupt lands.
+ *
+ * GS: in the kernel, the GS base points at this CPU's struct cpu; in user
+ * mode it is whatever user code made it. So on entry from ring 3 (the
+ * saved CS has RPL 3), swapgs trades the user base for the kernel one kept
+ * in MSR_KERNEL_GS_BASE, and the exit back to ring 3 trades them back. */
 .macro COMMON_STUB name, handler
 \name:
+    testb $3, 24(%rsp) /* saved CS, above int_no and err_code */
+    jz 1f
+    swapgs
+1:
     push %r15
     push %r14
     push %r13
@@ -137,6 +160,10 @@ isr128:
     pop %r15
 
     add $16, %rsp /* discard int_no + err_code */
+    testb $3, 8(%rsp) /* returning to ring 3? */
+    jz 2f
+    swapgs
+2:
     iretq
 .endm
 

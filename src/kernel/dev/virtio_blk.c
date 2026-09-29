@@ -2,7 +2,7 @@
 #include "block.h"
 #include <atos/abi.h>
 #include "pci.h"
-#include "pit.h"
+#include "timer.h"
 #include "../lib/io.h"
 #include "../lib/kprintf.h"
 #include "../lib/string.h"
@@ -126,9 +126,9 @@ static int submit(struct vblk_dev *v, uint32_t type, uint64_t lba, uint32_t coun
 
     /* Poll, yielding between checks: the device completes asynchronously,
      * and a blocked disk request shouldn't stall every other task. */
-    uint64_t deadline = pit_get_ticks() + REQUEST_TIMEOUT_TICKS;
+    uint64_t deadline = timer_ticks() + REQUEST_TIMEOUT_TICKS;
     while (v->used->idx == v->last_used) {
-        if (pit_get_ticks() > deadline) {
+        if (timer_ticks() > deadline) {
             kprintf("ATOS: virtio-blk: request timed out (lba %lu)\n", lba);
             return -EIO;
         }

@@ -1,5 +1,5 @@
 #include "rtc.h"
-#include "../arch/x86_64/cpu.h"
+#include "../lib/spinlock.h"
 #include "../lib/io.h"
 
 #define CMOS_INDEX 0x70
@@ -20,6 +20,7 @@
 #define STATUS_B_BINARY   0x04
 
 static uint8_t century_reg;
+static struct spinlock cmos_lock;
 
 void rtc_set_century_register(uint8_t reg) {
     century_reg = reg;
@@ -44,7 +45,7 @@ static void read_raw(struct rtc_time *t) {
 }
 
 void rtc_read(struct rtc_time *out) {
-    uint64_t flags = irq_save(); /* the index/data port pair is shared state */
+    uint64_t flags = spin_lock_irqsave(&cmos_lock); /* the index/data port pair is shared */
 
     /* The clock can tick over mid-read, so read until two consecutive
      * reads agree. */
@@ -57,7 +58,7 @@ void rtc_read(struct rtc_time *out) {
              a.day != b.day || a.month != b.month || a.year != b.year || a.century != b.century);
 
     uint8_t status_b = cmos_read(REG_STATUS_B);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&cmos_lock, flags);
 
     int pm = !(status_b & STATUS_B_24H) && (b.hour & 0x80);
     b.hour &= 0x7F;

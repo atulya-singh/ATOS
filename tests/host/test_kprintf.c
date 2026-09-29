@@ -1,4 +1,5 @@
 #include "test.h"
+#include "dev/console.h"
 #include "lib/kprintf.h"
 #include <limits.h>
 #include <stdint.h>
@@ -9,6 +10,8 @@
 #pragma GCC diagnostic ignored "-Wformat-extra-args"
 
 /* kprintf's output sink, captured instead of going to a console. */
+struct spinlock console_lock;
+
 static char captured[1024];
 static size_t captured_len;
 

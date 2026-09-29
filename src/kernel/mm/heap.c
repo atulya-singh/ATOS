@@ -2,7 +2,7 @@
 #include "heap_core.h"
 #include "pmm.h"
 #include "vmm.h"
-#include "../arch/x86_64/cpu.h"
+#include "../lib/spinlock.h"
 #include "../lib/kprintf.h"
 
 /* Far above the HHDM range (which only spans actual installed RAM) and the
@@ -14,6 +14,7 @@
 #define KHEAP_SIZE (4 * 1024 * 1024ULL)
 
 static struct heap_arena arena;
+static struct spinlock heap_lock;
 
 void heap_init(void) {
     uint64_t pages = KHEAP_SIZE / PAGE_SIZE;
@@ -26,25 +27,24 @@ void heap_init(void) {
             (uint64_t)KHEAP_BASE);
 }
 
-/* kmalloc/kfree run with interrupts off for the same reason as the PMM:
- * dead tasks are freed from the timer IRQ. */
+/* Shared by every CPU; interrupts off while held, as with the PMM. */
 void *kmalloc(size_t size) {
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&heap_lock);
     void *p = heap_arena_alloc(&arena, size);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&heap_lock, flags);
     if (!p && size) kprintf("ATOS: kmalloc: out of heap space (requested %lu bytes)\n", size);
     return p;
 }
 
 void kfree(void *ptr) {
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&heap_lock);
     heap_arena_free(&arena, ptr);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&heap_lock, flags);
 }
 
 size_t heap_free_bytes(void) {
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&heap_lock);
     size_t total = heap_arena_free_bytes(&arena);
-    irq_restore(flags);
+    spin_unlock_irqrestore(&heap_lock, flags);
     return total;
 }

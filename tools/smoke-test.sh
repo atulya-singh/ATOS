@@ -19,7 +19,7 @@ dd if=/dev/zero of="$DISK" bs=1M count=4 status=none
 printf 'ATOSDISK' | dd of="$DISK" conv=notrunc status=none
 ./tools/mkfatdisk.sh "$FATDISK"
 
-qemu-system-x86_64 -M q35 -m 256M -display none -no-reboot \
+qemu-system-x86_64 -M q35 -smp 4 -m 256M -display none -no-reboot \
     -serial "file:$LOG" -monitor "unix:$MON,server,nowait" \
     -drive "file=$DISK,format=raw,if=none,id=disk0" \
     -device virtio-blk-pci,drive=disk0,disable-legacy=off \
@@ -134,7 +134,12 @@ done
 
 check "framebuffer console"
 check_re "acpi: revision [0-9]+, (XSDT|RSDT) with [0-9]+ tables:.* FACP.* APIC"
-check "acpi: MADT: 1 CPU(s), 1 I/O APIC(s)"
+check "acpi: MADT: 4 CPU(s), 1 I/O APIC(s)"
+check "ioapic: id 0, GSIs 0-23"
+check_re "lapic: timer runs at [0-9]+ kHz"
+check "smp: CPU 3 (LAPIC id 3) online"
+check "smp: 4 CPU(s) online"
+check_re "smp self-test ok: 160000/160000 spinlocked and 3200/3200 mutexed increments, workers ran on [2-4] of 4 CPU"
 check "\\_S5 found"
 check "ATOS: powering off"
 if [ $powered_off = 1 ]; then echo "PASS  poweroff: QEMU exited"; else echo "FAIL  poweroff: QEMU still running"; status=1; fi
@@ -151,7 +156,7 @@ check "(user-hello) exited with code 42"
 check "(user-fault) killed: Page Fault"
 check "(user-spin) exited with code 7"
 check "all tasks reaped cleanly"
-check "self-test summary: 6 passed, 0 failed"
+check "self-test summary: 7 passed, 0 failed"
 check "vfs: hello through /dev/console"
 check "vfs self-test ok"
 check "initrd self-test ok"
@@ -245,7 +250,7 @@ boot_variant() { # boot_variant <cmdline> [extra qemu args...]
     printf 'timeout: 0\n/ATOS variant\n    protocol: limine\n    kernel_path: boot():/boot/kernel.elf\n    module_path: boot():/boot/initrd.tar\n    cmdline: %s\n' "$cmdline" > "$conf"
     ISO=smoke-variant.iso ISO_ROOT=smoke-variant-root LIMINE_CONF=$conf ./tools/iso.sh >/dev/null 2>&1
     rm -f "$log"
-    qemu-system-x86_64 -M q35 -m 256M -display none -no-reboot \
+    qemu-system-x86_64 -M q35 -smp 4 -m 256M -display none -no-reboot \
         -serial "file:$log" -cdrom smoke-variant.iso "$@" 2>/dev/null &
     local pid=$!
     VSTATUS=timeout
@@ -304,7 +309,7 @@ crash_status=$(( crash_status | status )); status=0
 # Headless self-test mode: QEMU's exit status is the verdict (1 = pass).
 boot_variant selftest-exit -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -drive "file=$DISK,format=raw,if=none,id=disk0" -device virtio-blk-pci,drive=disk0,disable-legacy=off
-check "self-test summary: 6 passed, 0 failed"
+check "self-test summary: 7 passed, 0 failed"
 if [ "$VSTATUS" = 1 ]; then echo "PASS  selftest-exit: QEMU exit status 1"; else echo "FAIL  selftest-exit: QEMU exit status $VSTATUS"; status=1; fi
 check_absent "self-tests done, starting /bin/init"
 [ $status -ne 0 ] && cat "$LOG"

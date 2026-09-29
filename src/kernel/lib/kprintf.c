@@ -1,5 +1,4 @@
 #include "kprintf.h"
-#include "../arch/x86_64/cpu.h"
 #include "../dev/console.h"
 #include <stdarg.h>
 #include <stdint.h>
@@ -48,7 +47,7 @@ void kprintf(const char *fmt, ...) {
 void kvprintf(const char *fmt, va_list args) {
     /* Whole-message atomicity: without this, a timer preemption mid-call
      * interleaves two tasks' output character by character. */
-    uint64_t flags = irq_save();
+    uint64_t flags = spin_lock_irqsave(&console_lock);
 
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') {
@@ -124,5 +123,5 @@ void kvprintf(const char *fmt, va_list args) {
         }
     }
 
-    irq_restore(flags);
+    spin_unlock_irqrestore(&console_lock, flags);
 }

@@ -1,4 +1,5 @@
 KERNEL := kernel.elf
+.DEFAULT_GOAL := all
 
 # Overridable so CI (native x86_64 Linux) can use plain cc/ld while
 # dev.sh's Docker container (arm64 host) points these at the
