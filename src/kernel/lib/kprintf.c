@@ -38,11 +38,16 @@ static void print_int(long long value) {
 }
 
 void kprintf(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    kvprintf(fmt, args);
+    va_end(args);
+}
+
+void kvprintf(const char *fmt, va_list args) {
     /* Whole-message atomicity: without this, a timer preemption mid-call
      * interleaves two tasks' output character by character. */
     uint64_t flags = irq_save();
-    va_list args;
-    va_start(args, fmt);
 
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') {
@@ -114,6 +119,5 @@ void kprintf(const char *fmt, ...) {
         }
     }
 
-    va_end(args);
     irq_restore(flags);
 }

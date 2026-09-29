@@ -221,4 +221,56 @@ if [ $status -ne 0 ]; then
     echo "--- serial log ---"
     cat "$LOG"
 fi
+
+# Crash tests: boot a kernel told (via its command line) to crash on
+# purpose, and check the panic report names the right functions.
+crash_boot() { # crash_boot <kind>
+    local conf=smoke-crash.conf log=smoke-crash.log
+    printf 'timeout: 0\n/ATOS crash test\n    protocol: limine\n    kernel_path: boot():/boot/kernel.elf\n    module_path: boot():/boot/initrd.tar\n    cmdline: crashtest=%s\n' "$1" > "$conf"
+    ISO=smoke-crash.iso ISO_ROOT=smoke-crash-root LIMINE_CONF=$conf ./tools/iso.sh >/dev/null 2>&1
+    rm -f "$log"
+    qemu-system-x86_64 -M q35 -m 256M -display none -no-reboot \
+        -serial "file:$log" -cdrom smoke-crash.iso 2>/dev/null &
+    local pid=$!
+    for _ in $(seq 1 150); do
+        grep -qF -- "--- system halted ---" "$log" 2>/dev/null && break
+        sleep 0.2
+    done
+    kill $pid 2>/dev/null || true
+    wait $pid 2>/dev/null || true
+    LOG=$log
+}
+crash_status=$status
+status=0
+crash_boot pagefault
+check "*** ATOS KERNEL PANIC ***"
+check "unhandled exception 14 (Page Fault)"
+check "faulting address: 0x0000000000000000"
+check_re "\] crash_deref\+0x"
+check_re "\] crash_level2\+0x"
+check_re "\] crash_level1\+0x"
+check_re "\] crashtest_task\+0x"
+check "task: "
+check "(crashtest)"
+check "--- system halted ---"
+[ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+crash_boot stackoverflow
+check "unhandled exception 8 (Double Fault)"
+check "likely cause: kernel stack overflow"
+check_re "\] crash_recurse\+0x"
+check_re "same frame [0-9]+ more time"
+check_re "\] crashtest_task\+0x"
+check "--- system halted ---"
+[ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+crash_boot assert
+check "assertion failed: value == 42 (src/kernel/crashtest.c:"
+check_re "\] crash_assert\+0x"
+check "--- system halted ---"
+[ $status -ne 0 ] && cat "$LOG"
+status=$(( crash_status | status ))
+rm -rf smoke-crash.conf smoke-crash.iso smoke-crash-root smoke-crash.log
 exit $status

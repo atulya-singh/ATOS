@@ -20,6 +20,12 @@ static volatile struct limine_kernel_address_request kernel_address_request = {
     .revision = 0,
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_kernel_file_request kernel_file_request = {
+    .id = LIMINE_KERNEL_FILE_REQUEST,
+    .revision = 0,
+};
+
 static uint64_t hhdm_offset;
 
 void boot_info_init(void) {
@@ -49,4 +55,10 @@ void *phys_to_virt(uint64_t phys) {
 
 uint64_t virt_to_phys_hhdm(const void *hhdm_virt) {
     return (uint64_t)hhdm_virt - hhdm_offset;
+}
+
+const char *boot_info_cmdline(void) {
+    struct limine_kernel_file_response *r = kernel_file_request.response;
+    if (!r || !r->kernel_file || !r->kernel_file->cmdline) return "";
+    return r->kernel_file->cmdline;
 }

@@ -7,8 +7,10 @@ cd "$(dirname "$0")/.."
 
 KERNEL=kernel.elf
 INITRD=initrd.tar
-ISO_ROOT=iso_root
-ISO=atos.iso
+# Overridable so tests can build variants with their own boot config.
+ISO_ROOT=${ISO_ROOT:-iso_root}
+ISO=${ISO:-atos.iso}
+LIMINE_CONF=${LIMINE_CONF:-limine.conf}
 LIMINE_DIR=third_party/limine
 
 for f in "$KERNEL" "$INITRD"; do
@@ -22,12 +24,12 @@ rm -rf "$ISO_ROOT"
 mkdir -p "$ISO_ROOT/boot/limine" "$ISO_ROOT/EFI/BOOT"
 
 cp "$KERNEL" "$INITRD" "$ISO_ROOT/boot/"
-cp limine.conf "$ISO_ROOT/boot/limine/"
+cp "$LIMINE_CONF" "$ISO_ROOT/boot/limine/limine.conf"
 cp "$LIMINE_DIR/limine-bios.sys" "$LIMINE_DIR/limine-bios-cd.bin" "$LIMINE_DIR/limine-uefi-cd.bin" \
     "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/BOOTX64.EFI" "$LIMINE_DIR/BOOTIA32.EFI" "$ISO_ROOT/EFI/BOOT/"
 
-xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+xorriso -as mkisofs -quiet -R -r -J -b boot/limine/limine-bios-cd.bin \
     -no-emul-boot -boot-load-size 4 -boot-info-table \
     --efi-boot boot/limine/limine-uefi-cd.bin \
     -efi-boot-part --efi-boot-image --protective-msdos-label \

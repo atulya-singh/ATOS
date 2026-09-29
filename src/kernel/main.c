@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "arch/x86_64/gdt.h"
+#include "crashtest.h"
 #include "arch/x86_64/idt.h"
 #include "dev/fbcon.h"
 #include "dev/keyboard.h"
@@ -54,6 +55,7 @@ static void kmain_stage2(void) {
     virtio_blk_init();
     mount_disk();
     selftest_spawn();
+    crashtest_start(boot_info_cmdline());
 
     pit_init(100);
     kprintf("ATOS: PIT timer at 100 Hz\n");

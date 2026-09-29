@@ -5,6 +5,8 @@ KERNEL := kernel.elf
 # x86_64-linux-gnu cross toolchain instead.
 CC ?= cc
 LD ?= ld
+# nm from the same binutils as $(LD) (x86_64-linux-gnu-ld -> x86_64-linux-gnu-nm).
+NM ?= $(patsubst %ld,%nm,$(LD))
 
 # -ffreestanding: don't assume standard libraries exist (no main, no printf);
 #   this also implies -fno-builtin, so our libk memcpy/memset can't get
@@ -14,8 +16,10 @@ LD ?= ld
 # -mcmodel=kernel: puts kernel code in the higher-half virtual address space.
 # -mno-80387 -mno-mmx -mno-sse -mno-sse2: the kernel never sets up FPU/SSE
 #   state, so forbid the compiler from emitting instructions that need it.
+# -fno-omit-frame-pointer: panic backtraces walk the saved-rbp chain.
 CFLAGS := -Wall -Wextra -std=gnu11 -g \
           -ffreestanding \
+          -fno-omit-frame-pointer \
           -fno-stack-protector \
           -fno-stack-check \
           -fno-pic -fno-pie \
@@ -91,8 +95,28 @@ ROOTFS_FILES := $(shell find rootfs -type f)
 
 all: $(KERNEL) $(INITRD)
 
-$(KERNEL): $(OBJ_FILES)
-	$(LD) $(LDFLAGS) $(OBJ_FILES) -o $@
+# Two-stage link for the panic symbol table (see tools/gensyms.sh): link
+# with an empty table, generate the real one from that, link again, and
+# check no function moved in between.
+KSYMS_DIR := build/kernel
+
+$(KSYMS_DIR)/ksyms-empty.S: tools/gensyms.sh
+	@mkdir -p $(dir $@)
+	./tools/gensyms.sh $(NM) - > $@
+
+$(KSYMS_DIR)/kernel-stage1.elf: $(OBJ_FILES) $(KSYMS_DIR)/ksyms-empty.o linker.ld
+	$(LD) $(LDFLAGS) $(OBJ_FILES) $(KSYMS_DIR)/ksyms-empty.o -o $@
+
+$(KSYMS_DIR)/ksyms.S: $(KSYMS_DIR)/kernel-stage1.elf tools/gensyms.sh
+	./tools/gensyms.sh $(NM) $< > $@
+
+$(KSYMS_DIR)/%.o: $(KSYMS_DIR)/%.S
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(KERNEL): $(OBJ_FILES) $(KSYMS_DIR)/ksyms.o linker.ld
+	$(LD) $(LDFLAGS) $(OBJ_FILES) $(KSYMS_DIR)/ksyms.o -o $@
+	@./tools/gensyms.sh $(NM) $@ | cmp -s - $(KSYMS_DIR)/ksyms.S || \
+		{ echo "error: function addresses moved between link stages" >&2; rm -f $@; exit 1; }
 
 # Compile individual C source files into object files
 %.o: %.c

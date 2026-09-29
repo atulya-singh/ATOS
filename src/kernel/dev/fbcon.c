@@ -32,6 +32,7 @@ static uint16_t ascii_to_glyph[128];
 
 static unsigned cols, rows, cur_col, cur_row;
 static int enabled;
+static const struct limine_framebuffer *fb_info;
 
 static uint32_t pack_rgb(const struct limine_framebuffer *f, uint8_t r, uint8_t g, uint8_t b) {
     /* Trust the reported channel layout rather than assuming BGRX. */
@@ -139,6 +140,7 @@ void fbcon_init(void) {
     if (f->bpp != 32 || f->memory_model != LIMINE_FRAMEBUFFER_RGB) return;
     if (!load_font()) return;
 
+    fb_info = f;
     fb = f->address;
     fb_width = f->width;
     fb_height = f->height;
@@ -152,4 +154,12 @@ void fbcon_init(void) {
     fill_rect(0, 0, fb_width, fb_height, bg_color);
     enabled = 1;
     kprintf("ATOS: framebuffer console %lux%lu (%ux%u text)\n", fb_width, fb_height, cols, rows);
+}
+
+void fbcon_panic_screen(void) {
+    if (!enabled) return;
+    fg_color = pack_rgb(fb_info, 0xFF, 0xFF, 0xFF);
+    bg_color = pack_rgb(fb_info, 0x80, 0x10, 0x10);
+    fill_rect(0, 0, fb_width, fb_height, bg_color);
+    cur_col = cur_row = 0;
 }
