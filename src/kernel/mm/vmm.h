@@ -4,6 +4,7 @@
 #define VMM_PRESENT  (1ULL << 0)
 #define VMM_WRITABLE (1ULL << 1)
 #define VMM_USER     (1ULL << 2)
+#define VMM_NOCACHE  ((1ULL << 3) | (1ULL << 4)) /* PWT + PCD: for MMIO registers */
 #define VMM_NX       (1ULL << 63) /* only valid once EFER.NXE is set; see vmm_init */
 
 /* Builds a fresh set of page tables (HHDM + the kernel image, with correct
@@ -16,6 +17,12 @@ __attribute__((noreturn)) void vmm_init(void (*continuation)(void));
 void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags);
 void vmm_unmap(uint64_t virt);
+
+/* Makes [phys, phys+len) reachable through the HHDM and returns the HHDM
+ * pointer. Most RAM already is (vmm_init maps every memmap range); this is
+ * for what isn't, like device registers (pass VMM_NOCACHE) or firmware
+ * tables outside the memmap. Pages already mapped are left alone. */
+void *vmm_map_phys(uint64_t phys, uint64_t len, uint64_t flags);
 int vmm_translate(uint64_t virt, uint64_t *out_phys);
 
 /* Allocates the intermediate tables covering [virt, virt+size) in the

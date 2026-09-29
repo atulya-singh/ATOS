@@ -124,7 +124,20 @@ run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "wc /disk/shrunk.txt"
 run_cmd "exit 3"
 
+# Last command: ACPI power-off must make QEMU exit by itself.
+type_line "poweroff"
+powered_off=0
+for _ in $(seq 1 50); do
+    if ! kill -0 $QEMU_PID 2>/dev/null; then powered_off=1; break; fi
+    sleep 0.2
+done
+
 check "framebuffer console"
+check_re "acpi: revision [0-9]+, (XSDT|RSDT) with [0-9]+ tables:.* FACP.* APIC"
+check "acpi: MADT: 1 CPU(s), 1 I/O APIC(s)"
+check "\\_S5 found"
+check "ATOS: powering off"
+if [ $powered_off = 1 ]; then echo "PASS  poweroff: QEMU exited"; else echo "FAIL  poweroff: QEMU still running"; status=1; fi
 check "PMM:"
 check "VMM: page tables built"
 check "heap self-test: alloc/free/coalesce ok"
@@ -294,6 +307,14 @@ boot_variant selftest-exit -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 check "self-test summary: 6 passed, 0 failed"
 if [ "$VSTATUS" = 1 ]; then echo "PASS  selftest-exit: QEMU exit status 1"; else echo "FAIL  selftest-exit: QEMU exit status $VSTATUS"; status=1; fi
 check_absent "self-tests done, starting /bin/init"
+[ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+# init=/bin/reboot: an ACPI reset, which -no-reboot turns into QEMU exiting.
+boot_variant init=/bin/reboot
+check "self-tests done, starting /bin/reboot"
+check "ATOS: restarting"
+if [ "$VSTATUS" = 0 ]; then echo "PASS  reboot: QEMU exited on reset"; else echo "FAIL  reboot: QEMU status $VSTATUS"; status=1; fi
 [ $status -ne 0 ] && cat "$LOG"
 status=$(( crash_status | status ))
 rm -rf smoke-variant.conf smoke-variant.iso smoke-variant-root smoke-variant.log

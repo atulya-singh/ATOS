@@ -19,6 +19,12 @@
 #define STATUS_B_24H      0x02
 #define STATUS_B_BINARY   0x04
 
+static uint8_t century_reg;
+
+void rtc_set_century_register(uint8_t reg) {
+    century_reg = reg;
+}
+
 static uint8_t cmos_read(uint8_t reg) {
     outb(CMOS_INDEX, NMI_DISABLE | reg);
     return inb(CMOS_DATA);
@@ -34,6 +40,7 @@ static void read_raw(struct rtc_time *t) {
     t->day = cmos_read(REG_DAY);
     t->month = cmos_read(REG_MONTH);
     t->year = cmos_read(REG_YEAR);
+    t->century = century_reg ? cmos_read(century_reg) : 0;
 }
 
 void rtc_read(struct rtc_time *out) {
@@ -47,7 +54,7 @@ void rtc_read(struct rtc_time *out) {
         a = b;
         read_raw(&b);
     } while (a.second != b.second || a.minute != b.minute || a.hour != b.hour ||
-             a.day != b.day || a.month != b.month || a.year != b.year);
+             a.day != b.day || a.month != b.month || a.year != b.year || a.century != b.century);
 
     uint8_t status_b = cmos_read(REG_STATUS_B);
     irq_restore(flags);
@@ -61,8 +68,10 @@ void rtc_read(struct rtc_time *out) {
         b.day = from_bcd(b.day);
         b.month = from_bcd(b.month);
         b.year = from_bcd((uint8_t)b.year);
+        b.century = from_bcd(b.century);
     }
     if (!(status_b & STATUS_B_24H)) b.hour = (uint8_t)(b.hour % 12 + (pm ? 12 : 0));
-    b.year = (uint16_t)(2000 + b.year); /* no century register without ACPI */
+    /* Without a century register (no ACPI FADT), assume 20xx. */
+    b.year = (uint16_t)((b.century ? b.century : 20) * 100 + b.year);
     *out = b;
 }

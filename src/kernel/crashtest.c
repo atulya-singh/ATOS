@@ -1,4 +1,5 @@
 #include "crashtest.h"
+#include "lib/cmdline.h"
 #include "lib/kprintf.h"
 #include "lib/panic.h"
 #include "lib/string.h"
@@ -38,17 +39,9 @@ static void crashtest_task(void *arg) {
     kprintf("crashtest: unknown kind '%s'\n", kind);
 }
 
-void crashtest_start(const char *cmdline) {
+void crashtest_start(void) {
     static char kind[32];
-    const char *p = cmdline;
-    for (; *p; p++) {
-        if ((p == cmdline || p[-1] == ' ') && memcmp(p, "crashtest=", 10) == 0) break;
+    if (cmdline_get("crashtest", kind, sizeof(kind))) {
+        task_create_kernel("crashtest", crashtest_task, kind);
     }
-    if (!*p) return;
-    p += 10;
-    size_t n = 0;
-    while (p[n] && p[n] != ' ' && n < sizeof(kind) - 1) n++;
-    memcpy(kind, p, n);
-    kind[n] = '\0';
-    task_create_kernel("crashtest", crashtest_task, kind);
 }

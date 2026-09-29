@@ -113,6 +113,19 @@ int vmm_translate(uint64_t virt, uint64_t *out_phys) {
     return 1;
 }
 
+void *vmm_map_phys(uint64_t phys, uint64_t len, uint64_t flags) {
+    uint64_t first = phys & ~(PAGE_SIZE - 1);
+    for (uint64_t p = first; p < phys + len; p += PAGE_SIZE) {
+        uint64_t virt = (uint64_t)phys_to_virt(p), unused;
+        /* Checked per page: an existing 2 MiB HHDM page must not be walked
+         * into as if it were a page table. */
+        if (!vmm_translate(virt, &unused)) {
+            map_4k(pml4, virt, p, VMM_PRESENT | VMM_WRITABLE | VMM_NX | flags);
+        }
+    }
+    return phys_to_virt(phys);
+}
+
 void vmm_unmap(uint64_t virt) {
     uint64_t *pte = lookup(pml4, virt, NULL);
     if (!pte) return;

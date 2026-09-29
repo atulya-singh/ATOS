@@ -94,6 +94,10 @@ int dup2(int oldfd, int newfd) {
     return (int)check(syscall3(SYS_DUP2, oldfd, newfd, 0));
 }
 
+int reboot(int how) {
+    return (int)check(syscall3(SYS_REBOOT, how, 0, 0));
+}
+
 void _exit(int code) {
     syscall3(SYS_EXIT, code, 0, 0);
     __builtin_unreachable();

@@ -22,6 +22,10 @@
 #define SYS_WAITPID 12 /* waitpid(pid or -1, int *status) -> pid of the exited child */
 #define SYS_GETPID  13 /* getpid() -> pid */
 #define SYS_DUP2    14 /* dup2(oldfd, newfd) -> newfd */
+#define SYS_REBOOT  15 /* reboot(ATOS_REBOOT_*) -> does not return on success */
+
+#define ATOS_REBOOT_POWEROFF 0
+#define ATOS_REBOOT_RESTART  1
 
 /* open() flags: Linux's values, for familiarity. */
 #define O_RDONLY  0x0000

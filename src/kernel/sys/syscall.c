@@ -1,6 +1,8 @@
 #include "syscall.h"
 #include "uaccess.h"
+#include "../acpi/acpi.h"
 #include "../arch/x86_64/idt.h"
+#include "../lib/kprintf.h"
 #include "../fs/vfs.h"
 #include "../proc/process.h"
 #include "../lib/string.h"
@@ -109,6 +111,15 @@ static int64_t sys_waitpid(int64_t pid, uint64_t ustatus) {
     return id;
 }
 
+static int64_t sys_reboot(uint64_t how) {
+    if (how != ATOS_REBOOT_POWEROFF && how != ATOS_REBOOT_RESTART) return -EINVAL;
+    /* Every FAT write goes straight to the disk, so there is nothing to
+     * flush first. */
+    kprintf("ATOS: %s\n", how == ATOS_REBOOT_POWEROFF ? "powering off" : "restarting");
+    if (how == ATOS_REBOOT_POWEROFF) acpi_poweroff();
+    acpi_reboot();
+}
+
 void syscall_handler(struct registers *regs) {
     /* Entered through an interrupt gate, so IF is clear. Syscalls can block
      * on disk I/O for a while, and every kernel structure they touch is
@@ -132,6 +143,7 @@ void syscall_handler(struct registers *regs) {
     case SYS_WAITPID: ret = sys_waitpid((int64_t)a0, a1); break;
     case SYS_GETPID:  ret = (int64_t)sched_current()->id; break;
     case SYS_DUP2:    ret = fd_dup2(sched_current(), (int)a0, (int)a1); break;
+    case SYS_REBOOT:  ret = sys_reboot(a0); break;
     case SYS_YIELD:   sched_yield(); ret = 0; break;
     case SYS_EXIT:    task_exit((int)a0);
     default:          ret = -ENOSYS; break;

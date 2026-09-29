@@ -67,7 +67,8 @@ static int split_words(char *line, char **words, int max) {
 
 static void help(void) {
     printf("Built-ins: help, exit [code]\n"
-           "Programs (in /bin): ls [dir], cat file..., echo words..., wc file..., libctest\n"
+           "Programs (in /bin): ls [dir], cat file..., echo words..., wc file..., libctest,\n"
+           "                    poweroff, reboot\n"
            "Redirect output with > file (truncate) or >> file (append).\n");
 }
 

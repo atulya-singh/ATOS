@@ -1,22 +1,24 @@
 #include <limine.h>
 #include <stdint.h>
 
+#include "acpi/acpi.h"
 #include "arch/x86_64/gdt.h"
-#include "crashtest.h"
 #include "arch/x86_64/idt.h"
+#include "crashtest.h"
+#include "dev/block.h"
 #include "dev/fbcon.h"
 #include "dev/keyboard.h"
 #include "dev/pci.h"
 #include "dev/pit.h"
+#include "dev/rtc.h"
 #include "dev/serial.h"
 #include "dev/virtio_blk.h"
-#include "dev/block.h"
 #include "fs/devfs.h"
 #include "fs/fat.h"
 #include "fs/initrd.h"
+#include "lib/cmdline.h"
 #include "lib/io.h"
 #include "lib/kprintf.h"
-#include "lib/string.h"
 #include "mm/boot_info.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
@@ -33,18 +35,6 @@ static volatile LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
-
-/* Whether the kernel command line contains `word` as a whole word. */
-static int cmdline_has(const char *cmdline, const char *word) {
-    size_t n = strlen(word);
-    for (const char *p = cmdline; *p; p++) {
-        if ((p == cmdline || p[-1] == ' ') && memcmp(p, word, n) == 0 &&
-            (p[n] == ' ' || p[n] == '\0')) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
 /* QEMU's isa-debug-exit device (-device isa-debug-exit,iobase=0xf4) ends
  * the emulator with status (code << 1) | 1: 1 for pass, 3 for fail.
@@ -69,6 +59,9 @@ static void kmain_stage2(void) {
     heap_init();
     selftest_heap();
 
+    acpi_init();
+    rtc_set_century_register(acpi_rtc_century_register());
+
     sched_init();
     initrd_init();
     devfs_init();
@@ -77,10 +70,13 @@ static void kmain_stage2(void) {
     virtio_blk_init();
     mount_disk();
     selftest_spawn();
-    crashtest_start(boot_info_cmdline());
+    crashtest_start();
     /* "selftest-exit": a headless CI run. Instead of starting userspace,
      * leave QEMU with the self-test verdict as its exit status. */
-    int selftest_exit = cmdline_has(boot_info_cmdline(), "selftest-exit");
+    int selftest_exit = cmdline_has("selftest-exit");
+    /* "init=<path>": run something other than /bin/init as the first process. */
+    static char init_path[64] = "/bin/init";
+    cmdline_get("init", init_path, sizeof(init_path));
 
     pit_init(100);
     kprintf("ATOS: PIT timer at 100 Hz\n");
@@ -98,9 +94,11 @@ static void kmain_stage2(void) {
         asm volatile("hlt");
         if (selftest_poll() && !init_started) {
             if (selftest_exit) qemu_debug_exit(selftest_failures() ? 1 : 0);
-            static const char *const init_argv[] = {"/bin/init"};
-            kprintf("ATOS: self-tests done, starting /bin/init\n");
-            process_spawn("/bin/init", 1, init_argv);
+            const char *init_argv[] = {init_path};
+            kprintf("ATOS: self-tests done, starting %s\n", init_path);
+            if (process_spawn(init_path, 1, init_argv) < 0) {
+                kprintf("ATOS: could not start %s\n", init_path);
+            }
             init_started = 1;
         }
 

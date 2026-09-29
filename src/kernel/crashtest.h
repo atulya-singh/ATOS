@@ -5,4 +5,4 @@
  *   pagefault      NULL dereference a few calls deep
  *   stackoverflow  unbounded recursion into the stack's guard page (#DF)
  *   assert         a failing KASSERT */
-void crashtest_start(const char *cmdline);
+void crashtest_start(void);
