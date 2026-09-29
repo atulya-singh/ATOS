@@ -83,9 +83,11 @@ struct atos_sockaddr_in {
 
 /* The (single) network interface's configuration and counters. Addresses
  * in network byte order. */
+#define ATOS_NETINFO_DHCP 1 /* the address is leased over DHCP */
+
 struct atos_netinfo {
     uint8_t mac[6];
-    uint16_t reserved;
+    uint16_t flags; /* ATOS_NETINFO_* */
     uint32_t addr, netmask, gateway, dns;
     uint64_t rx_packets, tx_packets, rx_bytes, tx_bytes, rx_dropped;
 };

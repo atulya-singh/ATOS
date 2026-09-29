@@ -43,7 +43,7 @@ Set with `cmdline:` in `limine.conf`:
 | `init=<path>` | Run `<path>` as the first process instead of `/bin/init` |
 | `selftest-exit` | Headless CI mode: exit QEMU (isa-debug-exit) with the self-test verdict instead of starting userspace |
 | `crashtest=pagefault\|stackoverflow\|assert` | Deliberately crash, to test the panic path |
-| `ip=`, `netmask=`, `gw=`, `dns=` | Static network configuration (defaults match QEMU user networking) |
+| `ip=`, `netmask=`, `gw=`, `dns=` | Static network configuration instead of DHCP (defaults match QEMU user networking); `ip=dhcp` is the default |
 
 ## Source layout
 

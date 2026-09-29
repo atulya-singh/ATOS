@@ -7,6 +7,8 @@
 
 struct mutex net_lock;
 static struct netif *iface;
+static int use_dhcp;
+static volatile int configured;
 
 void net_register(struct netif *nif) {
     if (!iface) iface = nif;
@@ -52,9 +54,16 @@ void net_receive(struct netif *nif, const void *frame, size_t len) {
  * (legacy INTx routing on q35 needs the ACPI _PRT, i.e. an AML
  * interpreter), so: after traffic, poll every scheduling round for a few
  * ticks to keep latency low during an exchange; when quiet, once a tick. */
+static void static_config(void);
+
 static void net_thread(void *arg) {
     (void)arg;
     uint64_t last_tick = 0, busy_until = 0;
+    if (use_dhcp) {
+        mutex_lock(&net_lock);
+        dhcp_start(static_config);
+        mutex_unlock(&net_lock);
+    }
     for (;;) {
         mutex_lock(&net_lock);
         int n = iface->poll(iface);
@@ -62,6 +71,7 @@ static void net_thread(void *arg) {
         if (now != last_tick) {
             last_tick = now;
             arp_tick(now);
+            dhcp_tick(now);
             tcp_tick(now);
             socket_tick(now);
         }
@@ -81,21 +91,40 @@ static void config_addr(const char *key, uint32_t *field, const char *fallback) 
     }
 }
 
+void net_print_config(void) {
+    kprintf("ATOS: net: " IP_FMT "/" IP_FMT " gateway " IP_FMT " dns " IP_FMT "\n",
+            IP_ARGS(iface->ip), IP_ARGS(iface->netmask), IP_ARGS(iface->gateway),
+            IP_ARGS(iface->dns));
+    configured = 1;
+}
+
+int net_ready(void) {
+    return !iface || configured;
+}
+
+/* The static configuration: QEMU user-mode networking's fixed layout (we
+ * are 10.0.2.15, the host/gateway is 10.0.2.2, its DNS forwarder
+ * 10.0.2.3), each overridable on the kernel command line. Also the
+ * fallback when DHCP gets no answer. */
+static void static_config(void) {
+    config_addr("ip", &iface->ip, "10.0.2.15");
+    config_addr("netmask", &iface->netmask, "255.255.255.0");
+    config_addr("gw", &iface->gateway, "10.0.2.2");
+    config_addr("dns", &iface->dns, "10.0.2.3");
+    net_print_config();
+}
+
 void net_init(void) {
     if (!iface) {
         kprintf("ATOS: net: no network interface\n");
         return;
     }
-    /* QEMU user-mode networking's fixed layout: we are 10.0.2.15, the
-     * host/gateway is 10.0.2.2, its DNS forwarder 10.0.2.3. */
-    config_addr("ip", &iface->ip, "10.0.2.15");
-    config_addr("netmask", &iface->netmask, "255.255.255.0");
-    config_addr("gw", &iface->gateway, "10.0.2.2");
-    config_addr("dns", &iface->dns, "10.0.2.3");
-    kprintf("ATOS: net: " IP_FMT "/" IP_FMT " gateway " IP_FMT " dns " IP_FMT "\n",
-            IP_ARGS(iface->ip), IP_ARGS(iface->netmask), IP_ARGS(iface->gateway),
-            IP_ARGS(iface->dns));
+    /* DHCP unless the command line pins an address (ip=a.b.c.d). */
+    char buf[20];
+    use_dhcp = !cmdline_get("ip", buf, sizeof(buf)) || strcmp(buf, "dhcp") == 0;
+    if (!use_dhcp) static_config();
     if (!task_create_kernel("net", net_thread, NULL)) {
         kprintf("ATOS: net: could not start the net thread\n");
+        configured = 1; /* nothing will ever configure it; don't hold up init */
     }
 }

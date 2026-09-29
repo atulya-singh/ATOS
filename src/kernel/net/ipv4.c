@@ -30,7 +30,9 @@ void ipv4_input(struct netif *nif, const uint8_t *pkt, size_t len) {
     /* Fragments aren't reassembled; everything we send sets DF, and QEMU's
      * gateway never needs to fragment toward us. */
     if (ntohs(h.frag) & (IP_FLAG_MF | IP_FRAG_MASK)) return;
-    if (h.dst != nif->ip && h.dst != 0xFFFFFFFF) return;
+    /* With no address yet (DHCP in progress), take everything: a server
+     * may address its reply to the address it is offering. */
+    if (nif->ip && h.dst != nif->ip && h.dst != 0xFFFFFFFF) return;
 
     const uint8_t *payload = pkt + hlen;
     size_t plen = total - hlen;
@@ -126,6 +128,10 @@ void udp_input(uint32_t src, uint32_t dst, const uint8_t *seg, size_t len) {
         uint32_t sum = checksum_pseudo(src, dst, IP_PROTO_UDP, (uint16_t)ulen);
         if (checksum_finish(checksum_add(sum, seg, ulen)) != 0) return;
     }
+    if (ntohs(h.dport) == 68) { /* the DHCP client's port belongs to the kernel */
+        dhcp_input(seg + sizeof(h), ulen - sizeof(h));
+        return;
+    }
     struct socket *s = socket_find(ATOS_SOCK_DGRAM, ntohs(h.dport));
     if (!s) return; /* no ICMP port-unreachable: nobody here needs it */
     if (s->connected && (s->rip != src || s->rport != ntohs(h.sport))) return;
@@ -133,11 +139,16 @@ void udp_input(uint32_t src, uint32_t dst, const uint8_t *seg, size_t len) {
 }
 
 int udp_send(struct socket *s, uint32_t dst, uint16_t dport, const void *data, size_t len) {
+    return udp_output(s->lport, dst, dport, data, len);
+}
+
+int udp_output(uint16_t sport, uint32_t dst, uint16_t dport, const void *data, size_t len) {
     if (len > ETH_MTU - IP_HLEN - sizeof(struct udp_header)) return -EMSGSIZE;
     struct netif *nif = net_interface();
+    if (!nif) return -ENETUNREACH;
     uint8_t buf[ETH_MTU - IP_HLEN];
     uint16_t ulen = (uint16_t)(sizeof(struct udp_header) + len);
-    struct udp_header h = {htons(s->lport), htons(dport), htons(ulen), 0};
+    struct udp_header h = {htons(sport), htons(dport), htons(ulen), 0};
     memcpy(buf, &h, sizeof(h));
     memcpy(buf + sizeof(h), data, len);
     uint32_t sum = checksum_pseudo(nif->ip, dst, IP_PROTO_UDP, ulen);

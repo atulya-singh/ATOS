@@ -10,7 +10,7 @@ Limine and runs on up to 16 CPUs.
   - Panic screen with a symbolized backtrace
 - **Storage:** VFS with a tar initrd, devfs, and a read/write FAT32
   driver (long file names, mkdir, rename, delete) over virtio-blk
-- **Networking:** virtio-net and an IPv4 stack (ARP, ICMP, UDP, TCP)
+- **Networking:** virtio-net and an IPv4 stack (ARP, DHCP, ICMP, UDP, TCP)
   with BSD sockets, plus `ping`, `nslookup`, `wget`, and an `httpd`
 - **Hardware:** ACPI power-off and reboot, LAPIC/IOAPIC, PCI
 - **Userspace:** a small libc, a shell, core utilities, and a ports

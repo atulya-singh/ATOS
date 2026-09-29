@@ -67,5 +67,22 @@ int ipv4_send(uint32_t dst, uint8_t proto, const void *payload, size_t len);
 
 void icmp_input(uint32_t src, const uint8_t *msg, size_t len);
 void udp_input(uint32_t src, uint32_t dst, const uint8_t *seg, size_t len);
+/* Sends one UDP datagram from our address, port `sport`. */
+int udp_output(uint16_t sport, uint32_t dst, uint16_t dport, const void *data, size_t len);
 void tcp_input(uint32_t src, uint32_t dst, const uint8_t *seg, size_t len);
 void tcp_tick(uint64_t now);
+
+/* DHCP client (dhcp.c). dhcp_start clears the address and begins
+ * discovery; `fallback` runs if the first discovery gets no answer. */
+void dhcp_start(void (*fallback)(void));
+void dhcp_tick(uint64_t now);
+void dhcp_input(const uint8_t *msg, size_t len);
+int dhcp_bound(void);
+
+/* Logs the interface's address configuration and marks the network
+ * ready. net_lock held. */
+void net_print_config(void);
+/* Whether the interface has its configuration (static, fallback, or a
+ * DHCP lease) -- or there is no NIC, so nothing to wait for. Init is
+ * started only once this holds. */
+int net_ready(void);

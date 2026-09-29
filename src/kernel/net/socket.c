@@ -328,6 +328,7 @@ int64_t sys_netinfo(uint64_t uinfo) {
     info.netmask = nif->netmask;
     info.gateway = nif->gateway;
     info.dns = nif->dns;
+    info.flags = dhcp_bound() ? ATOS_NETINFO_DHCP : 0;
     info.rx_packets = nif->rx_packets;
     info.tx_packets = nif->tx_packets;
     info.rx_bytes = nif->rx_bytes;

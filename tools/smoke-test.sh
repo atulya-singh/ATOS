@@ -288,7 +288,9 @@ check_line "00000010  69 6e 20 74                                       |in t|"
 check_line "00000014"
 check_line "Premature optimization is the root of all evil. -- Donald Knuth"
 check_re "virtio-net at PCI [0-9a-f:.]+, io 0x[0-9a-f]+, MAC 52:54:00:12:34:56"
+check "net: dhcp: leased 10.0.2.15 from 10.0.2.2 for "
 check "net: 10.0.2.15/255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
+check_line "      config dhcp"
 check_line "eth0: inet 10.0.2.15 netmask 255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
 check_line "      ether 52:54:00:12:34:56"
 check_re "^64 bytes from 10.0.2.2: icmp_seq=1 time=[0-9]+ ms$"
@@ -441,6 +443,26 @@ boot_variant init=/bin/reboot
 check "self-tests done, starting /bin/reboot"
 check "ATOS: restarting"
 if [ "$VSTATUS" = 0 ]; then echo "PASS  reboot: QEMU exited on reset"; else echo "FAIL  reboot: QEMU status $VSTATUS"; status=1; fi
+[ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+# A NIC on an empty hub: nobody answers DHCP, so after its retries the
+# kernel falls back to the static configuration and still starts init.
+LONELY_NIC=(-netdev hubport,id=n0,hubid=0 -device virtio-net-pci,netdev=n0,disable-legacy=off)
+boot_variant init=/bin/poweroff "${LONELY_NIC[@]}"
+check "net: dhcp: discovering"
+check "net: dhcp: no answer, using the static configuration"
+check "net: 10.0.2.15/255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
+check "self-tests done, starting /bin/poweroff"
+if [ "$VSTATUS" = 0 ]; then echo "PASS  dhcp fallback: booted and powered off"; else echo "FAIL  dhcp fallback: QEMU status $VSTATUS"; status=1; fi
+[ $status -ne 0 ] && cat "$LOG"
+crash_status=$(( crash_status | status )); status=0
+
+# ip= on the command line: a static address, no DHCP at all.
+boot_variant "init=/bin/poweroff ip=192.168.7.9 gw=192.168.7.1" "${LONELY_NIC[@]}"
+check "net: 192.168.7.9/255.255.255.0 gateway 192.168.7.1 dns 10.0.2.3"
+check_absent "dhcp"
+check "self-tests done, starting /bin/poweroff"
 [ $status -ne 0 ] && cat "$LOG"
 status=$(( crash_status | status ))
 rm -rf smoke-variant.conf smoke-variant.iso smoke-variant-root smoke-variant.log

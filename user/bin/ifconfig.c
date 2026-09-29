@@ -22,6 +22,7 @@ int main(void) {
     printf(" netmask %s", ip(n.netmask));
     printf(" gateway %s", ip(n.gateway));
     printf(" dns %s\n", ip(n.dns));
+    printf("      config %s\n", n.flags & ATOS_NETINFO_DHCP ? "dhcp" : "static");
     printf("      ether %02x:%02x:%02x:%02x:%02x:%02x\n",
            n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
     printf("      rx %lu packets (%lu bytes, %lu dropped), tx %lu packets (%lu bytes)\n",

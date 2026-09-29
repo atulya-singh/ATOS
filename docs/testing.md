@@ -73,6 +73,9 @@ checks from the host side:
 - the three crash tests
 - `selftest-exit`
 - `init=/bin/reboot`
+- DHCP fallback: a NIC on an empty QEMU hub, so nobody answers and the
+  static configuration must kick in
+- `ip=` on the command line: a static address with no DHCP traffic
 
 Run it locally with `./dev.sh tools/smoke-test.sh` after `make iso`. It
 prints one `PASS`/`FAIL` line per check and exits non-zero on any

@@ -11,6 +11,7 @@ Code: `src/kernel/net/`, `src/kernel/dev/virtio_net.c`. Userspace:
  TCP (tcp.c)               connections, retransmission, FIN handshake
  UDP, ICMP (ipv4.c)        ports; echo request/reply
  IPv4 (ipv4.c)             header checks, routing (on-link vs gateway)
+ DHCP (dhcp.c)             lease, renewal at T1, static fallback
  ARP (arp.c)               16-entry cache, 60 s TTL, one queued packet per pending entry
  Ethernet (net.c)          framing, padding, dispatch by EtherType
  driver (virtio_net.c)     transmit + poll
@@ -29,7 +30,7 @@ holding it.
 **The net thread.** A kernel thread named `net`:
 
 1. Polls the NIC.
-2. Runs the ARP, TCP, and socket timers once per tick.
+2. Runs the ARP, DHCP, TCP, and socket timers once per tick.
 3. Paces itself. After traffic, it polls every scheduling round for a
    few ticks to keep latency low during an exchange. When quiet, it
    polls once a tick.
@@ -46,16 +47,33 @@ The NIC's interrupt is not used (see [drivers.md](drivers.md)).
 
 ## Configuration
 
-The address is static. The defaults match QEMU's user-mode network:
+By default the address comes from **DHCP** (`dhcp.c`), run by the net
+thread:
+
+1. Broadcast DISCOVER (with the broadcast flag set, since there is no
+   address to take unicast replies on), take the first OFFER, REQUEST
+   it, and on ACK apply the address, mask, router, and DNS server.
+2. At T1 (half the lease), broadcast a REQUEST for the same address. It
+   is retried every 4 s until an ACK comes or the lease expires, at
+   which point discovery starts over.
+3. A NAK also starts discovery over.
+
+While there is no address, IPv4 accepts packets to any destination, and
+UDP port 68 belongs to the kernel. Each phase gives up after 4 tries a
+second apart. If the very first discovery gets no answer, the
+static configuration below is used instead. Init starts only once the
+interface has a configuration (`net_ready`), so network commands work
+from the first prompt. `ifconfig` shows `config dhcp` or `config static`.
+
+With `ip=a.b.c.d` on the kernel command line, DHCP is skipped and the
+static configuration is used, with these defaults (QEMU's user-mode
+network layout), each overridable with `ip=`, `netmask=`, `gw=`, and `dns=`:
 
 | Setting | Default |
 |---------|---------|
 | Address | `10.0.2.15/24` |
 | Gateway | `10.0.2.2` |
 | DNS | `10.0.2.3` |
-
-Override them with `ip=`, `netmask=`, `gw=`, and `dns=` on the kernel
-command line. There is no DHCP client yet.
 
 ## IPv4, ICMP, UDP
 

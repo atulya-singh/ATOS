@@ -113,7 +113,9 @@ static void kmain_stage2(void) {
     uint64_t last_reported = 0;
     for (;;) {
         asm volatile("hlt");
-        if (selftest_poll() && !init_started) {
+        /* ...and once the network is configured (DHCP can take a few
+         * seconds), so network commands work from the first prompt. */
+        if (selftest_poll() && net_ready() && !init_started) {
             if (selftest_exit) qemu_debug_exit(selftest_failures() ? 1 : 0);
             const char *init_argv[] = {init_path};
             kprintf("ATOS: self-tests done, starting %s\n", init_path);
