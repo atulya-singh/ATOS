@@ -76,7 +76,7 @@ tools/              build, run, test, and packaging scripts
 | `0x0000000000400000` | user program image (ELF), then the brk heap |
 | `0x00007FFFFFFFF000` (top, downward) | user stack (16 KiB) |
 | HHDM (Limine's offset) | all physical RAM, plus device registers mapped on demand |
-| `0xFFFFA00000000000` | kernel heap (4 MiB) |
+| `0xFFFFA00000000000` | kernel heap (1 MiB, growable to 128 MiB) |
 | `0xFFFFB00000000000` | kernel stacks: 32 KiB slots, 16 KiB stack + unmapped guard below |
 | `0xFFFFFFFF80000000` | kernel image (`-mcmodel=kernel`) |
 

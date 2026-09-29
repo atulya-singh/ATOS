@@ -92,5 +92,5 @@ shoots down other CPUs' TLB entries for it (see [smp.md](smp.md)).
 ## Limits
 
 - No demand paging, copy-on-write, swapping, or `mmap`.
-- The kernel heap is a fixed 4 MiB.
+- The kernel heap grows but never shrinks, and tops out at 128 MiB.
 - User programs get a fixed 16 KiB stack. Their heap grows through `brk`.
