@@ -58,8 +58,22 @@ in every address space. The main operations:
 
 ## Kernel heap (`heap.c`, `heap_core.c`)
 
-The heap is a 4 MiB region at `0xFFFFA00000000000`, backed by PMM pages
-when it is initialized. The allocator (`heap_core.c`) is first-fit over
+The heap lives in a 128 MiB window at `0xFFFFA00000000000`. It starts
+with 1 MiB mapped and grows on demand: when `kmalloc` finds no block
+that fits, it maps more PMM pages at the heap's end (at least 256 KiB at
+a time) and extends the arena (`heap_arena_grow`). The page tables for
+the whole window are allocated up front (`vmm_prealloc_tables`, 256 KiB),
+so growing only writes leaf entries. That keeps it safe under the heap
+spinlock with no lock on the kernel's tables, and it means the pages a
+growth takes are exactly the heap pages. The heap never shrinks: freed
+memory stays in the arena.
+
+The boot self-tests account for growth. `heap_grown_bytes` counts it,
+and a leak check that spans a growth expects the PMM to have lost
+exactly those pages and the free heap to have gained exactly those
+bytes. The heap self-test forces a growth on every boot.
+
+The allocator (`heap_core.c`) is first-fit over
 address-ordered blocks that coalesce on free. It has no knowledge of
 paging or locking, so the host tests run it natively under ASan.
 `heap.c` wraps it with a spinlock to provide `kmalloc`/`kfree`.

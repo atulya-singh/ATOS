@@ -35,11 +35,23 @@ void selftest_heap(void) {
     kfree(c);
     kfree(d);
 
+    /* More than the heap has: it must grow, and the pages it took must be
+     * exactly the growth. */
+    uint64_t grown_before = heap_grown_bytes();
+    size_t big_size = (size_t)heap_size_bytes() + 512 * 1024;
+    uint8_t *big = kmalloc(big_size);
+    if (big) {
+        memset(big, 0xA5, big_size);
+        kfree(big);
+    }
+    uint64_t grown = heap_grown_bytes() - grown_before;
+
     uint64_t free_after = pmm_free_page_count();
-    int ok = d == b && free_before == free_after;
+    int ok = d == b && big && grown >= big_size && heap_check() &&
+             free_before == free_after + grown / PAGE_SIZE;
     record(ok);
-    kprintf("ATOS: heap self-test: alloc/free/coalesce %s (pmm free pages %lu -> %lu)\n",
-            ok ? "ok" : "FAILED", free_before, free_after);
+    kprintf("ATOS: heap self-test: alloc/free/coalesce/grow %s (pmm free pages %lu -> %lu, heap grew %lu KiB)\n",
+            ok ? "ok" : "FAILED", free_before, free_after, grown / 1024);
 }
 
 /* --- Phase 3 boot-time self-tests: multitasking + user mode --- */
@@ -279,7 +291,7 @@ static void spawn_self_tests(void) {
                      (size_t)(user_spin_end - user_spin_start));
 }
 
-static uint64_t baseline_tasks, pmm_before, heap_before;
+static uint64_t baseline_tasks, pmm_before, heap_before, grown_before;
 static int reaped_reported;
 
 void selftest_spawn(void) {
@@ -288,6 +300,7 @@ void selftest_spawn(void) {
     baseline_tasks = sched_task_count();
     pmm_before = pmm_free_page_count();
     heap_before = heap_free_bytes();
+    grown_before = heap_grown_bytes();
     spawn_self_tests();
 }
 
@@ -302,7 +315,10 @@ int selftest_poll(void) {
      * task struct should be back where it came from. */
     uint64_t pmm_after = pmm_free_page_count();
     uint64_t heap_after = heap_free_bytes();
-    int clean = pmm_after == pmm_before && heap_after == heap_before;
+    /* If the heap grew meanwhile, that growth is neither a leak nor
+     * missing heap: its pages left the PMM and joined the free heap. */
+    uint64_t grown = heap_grown_bytes() - grown_before;
+    int clean = pmm_after + grown / PAGE_SIZE == pmm_before && heap_after == heap_before + grown;
     record(clean);
     kprintf("ATOS: sched self-test: all tasks reaped %s (pmm free pages %lu -> %lu, heap free bytes %lu -> %lu)\n",
             clean ? "cleanly" : "WITH LEAKS", pmm_before, pmm_after, heap_before, heap_after);

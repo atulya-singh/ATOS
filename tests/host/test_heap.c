@@ -99,3 +99,31 @@ TEST(heap_random_churn) {
     CHECK_EQ_INT(heap_arena_free_bytes(&h), initial);
     free(mem);
 }
+
+/* Growing into memory right after the arena: a free last block absorbs
+ * it; a used one gets a new free block after it. */
+TEST(heap_grow) {
+    struct heap_arena h;
+    uint8_t *mem = aligned_alloc(HEAP_ALIGNMENT, 4 * ARENA_SIZE);
+    heap_arena_init(&h, mem, ARENA_SIZE);
+    size_t initial = heap_arena_free_bytes(&h);
+
+    CHECK(heap_arena_alloc(&h, ARENA_SIZE * 2) == NULL);
+    heap_arena_grow(&h, ARENA_SIZE); /* last block free: merged */
+    CHECK(heap_arena_check(&h));
+    CHECK_EQ_INT(heap_arena_free_bytes(&h), initial + ARENA_SIZE);
+    void *all = heap_arena_alloc(&h, heap_arena_free_bytes(&h));
+    CHECK(all != NULL);
+
+    heap_arena_grow(&h, ARENA_SIZE); /* last block used: new block */
+    CHECK(heap_arena_check(&h));
+    CHECK_EQ_INT(heap_arena_free_bytes(&h), ARENA_SIZE - HEAP_HEADER_SIZE);
+    uint8_t *more = heap_arena_alloc(&h, ARENA_SIZE / 2);
+    CHECK(more >= mem + 2 * ARENA_SIZE && more < mem + 3 * ARENA_SIZE);
+
+    heap_arena_free(&h, all);
+    heap_arena_free(&h, more);
+    CHECK(heap_arena_check(&h));
+    CHECK_EQ_INT(heap_arena_free_bytes(&h), initial + 2 * ARENA_SIZE);
+    free(mem);
+}

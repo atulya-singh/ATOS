@@ -10,6 +10,7 @@ struct heap_block {
 
 _Static_assert(sizeof(struct heap_block) % HEAP_ALIGNMENT == 0,
                "headers must keep payloads aligned");
+_Static_assert(sizeof(struct heap_block) == HEAP_HEADER_SIZE, "HEAP_HEADER_SIZE is stale");
 
 static size_t align_up(size_t n, size_t a) {
     return (n + (a - 1)) & ~(a - 1);
@@ -64,6 +65,21 @@ void heap_arena_free(struct heap_arena *h, void *ptr) {
     b->free = 1;
     try_merge(b, b->next);
     try_merge(b->prev, b);
+}
+
+void heap_arena_grow(struct heap_arena *h, size_t bytes) {
+    struct heap_block *last = h->head;
+    while (last->next) last = last->next;
+    if (last->free) { /* the new space simply extends it */
+        last->size += bytes;
+        return;
+    }
+    struct heap_block *b = (struct heap_block *)((uint8_t *)(last + 1) + last->size);
+    b->size = bytes - sizeof(struct heap_block);
+    b->free = 1;
+    b->prev = last;
+    b->next = NULL;
+    last->next = b;
 }
 
 size_t heap_arena_free_bytes(const struct heap_arena *h) {

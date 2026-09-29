@@ -12,10 +12,16 @@ struct heap_arena {
 };
 
 #define HEAP_ALIGNMENT 16
+/* Bytes of bookkeeping in front of every block. */
+#define HEAP_HEADER_SIZE 32
 
 void heap_arena_init(struct heap_arena *h, void *base, size_t size);
 void *heap_arena_alloc(struct heap_arena *h, size_t size);
 void heap_arena_free(struct heap_arena *h, void *ptr);
+/* Extends the arena by `bytes` of memory that directly follows its
+ * current end (the caller has made it usable). `bytes` must be a multiple
+ * of HEAP_ALIGNMENT and more than HEAP_HEADER_SIZE. */
+void heap_arena_grow(struct heap_arena *h, size_t bytes);
 /* Sum of free block payloads. */
 size_t heap_arena_free_bytes(const struct heap_arena *h);
 /* Structural self-check: links agree, blocks are contiguous, and no two

@@ -209,7 +209,7 @@ check "ATOS: powering off"
 if [ $powered_off = 1 ]; then echo "PASS  poweroff: QEMU exited"; else echo "FAIL  poweroff: QEMU still running"; status=1; fi
 check "PMM:"
 check "VMM: page tables built"
-check "heap self-test: alloc/free/coalesce ok"
+check "heap self-test: alloc/free/coalesce/grow ok"
 check "8086:29c0 class 06.00.00 host bridge"
 check "functions enumerated"
 check "entering idle loop"
