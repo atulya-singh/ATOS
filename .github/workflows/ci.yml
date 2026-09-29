@@ -16,6 +16,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential xorriso mtools dosfstools qemu-system-x86
 
+      - name: Host unit tests
+        run: make test-host
+
       - name: Build kernel
         run: make
 
