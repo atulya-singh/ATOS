@@ -47,6 +47,22 @@ static int64_t sys_open(uint64_t upath, int flags) {
     return fd;
 }
 
+/* mkdir, unlink, rmdir: one path argument. */
+static int64_t sys_path_op(uint64_t upath, int (*op)(const char *)) {
+    char path[PATH_MAX_USER];
+    int64_t err = strncpy_from_user(path, upath, sizeof(path));
+    if (err < 0) return err;
+    return op(path);
+}
+
+static int64_t sys_rename(uint64_t uold, uint64_t unew) {
+    char old_path[PATH_MAX_USER], new_path[PATH_MAX_USER];
+    int64_t err = strncpy_from_user(old_path, uold, sizeof(old_path));
+    if (err >= 0) err = strncpy_from_user(new_path, unew, sizeof(new_path));
+    if (err < 0) return err;
+    return vfs_rename(old_path, new_path);
+}
+
 static int64_t sys_seek(int fd, int64_t offset, int whence) {
     struct file *f = fd_get(sched_current(), fd);
     if (!f) return -EBADF;
@@ -157,6 +173,10 @@ void syscall_handler(struct registers *regs) {
     case SYS_NETINFO: ret = sys_netinfo(a0); break;
     case SYS_UPTIME:  ret = (int64_t)(timer_ticks() * (1000 / TIMER_HZ)); break;
     case SYS_SLEEP:   task_sleep((a0 * TIMER_HZ + 999) / 1000); ret = 0; break;
+    case SYS_MKDIR:   ret = sys_path_op(a0, vfs_mkdir); break;
+    case SYS_UNLINK:  ret = sys_path_op(a0, vfs_unlink); break;
+    case SYS_RMDIR:   ret = sys_path_op(a0, vfs_rmdir); break;
+    case SYS_RENAME:  ret = sys_rename(a0, a1); break;
     case SYS_YIELD:   sched_yield(); ret = 0; break;
     case SYS_EXIT:    task_exit((int)a0);
     default:          ret = -ENOSYS; break;

@@ -140,6 +140,25 @@ run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "cat /disk/numbers.txt > /disk/shrunk.txt" 30
 run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "wc /disk/shrunk.txt"
+run_cmd "mkdir -p /disk/tree/sub/deeper"
+run_cmd "cp /disk/new.txt /disk/tree/sub"
+run_cmd "mv /disk/tree/sub/new.txt \"/disk/tree/Renamed Long.txt\""
+run_cmd "mv /disk/copy.txt /disk/tree/sub/deeper"
+run_cmd "ls /disk/tree"
+run_cmd "mkdir /disk/tree"
+run_cmd "rmdir /disk/tree"
+run_cmd "mv /disk/tree /disk/tree/sub/inside"
+run_cmd "mv /disk/tree /disk/moved"
+run_cmd "wc /disk/moved/sub/deeper/copy.txt" 20
+run_cmd "mv /disk/moved/sub /disk/docs"
+run_cmd "ls /disk/docs/sub/deeper"
+run_cmd "mkdir -p /disk/junk/a/b"
+run_cmd "cp /disk/new.txt /disk/junk/a/b/x.txt"
+run_cmd "rm -r /disk/junk"
+run_cmd "rm /disk/moved"
+run_cmd "rm /disk/shrunk.txt"
+run_cmd "mv /disk/new.txt /disk/New.txt"
+run_cmd "ls /disk"
 run_cmd "pkg list"
 run_cmd "pkg info fortune"
 run_cmd "calc (2+3)*4 - 0x10"
@@ -241,6 +260,18 @@ check_line "line two"
 check_re "^ +13  Mixed Case Name.txt$"
 check_line "20000 20000 108894 /disk/copy.txt"
 check_line "1 1 5 /disk/shrunk.txt"
+check_re "^ +<dir>  sub/$"
+check_re "^ +19  Renamed Long.txt$"
+check_line "mkdir: /disk/tree: file exists"
+check_line "rmdir: /disk/tree: directory not empty"
+check_line "mv: /disk/tree -> /disk/tree/sub/inside: invalid argument"
+check_line "20000 20000 108894 /disk/moved/sub/deeper/copy.txt"
+check_re "^ +108894  copy.txt$"
+check_line "rm: /disk/moved: is a directory"
+check_re "^ +19  New.txt$"
+check_re "^ +<dir>  moved/$"
+check_absent "<dir>  junk/"
+check_absent "  shrunk.txt"
 check_re "^calc +1.0 +64-bit integer expression calculator$"
 check_re "^grep +1.0 +search files for lines matching a regular expression$"
 check_line "4 port(s) installed"
@@ -309,11 +340,14 @@ fat_is() { # fat_is <path on the FAT disk> <file with the expected contents>
 printf 'hello fat\nline two\n' > smoke-expect-new.txt
 printf 'long name ok\n' > smoke-expect-long.txt
 seq 1 20000 > smoke-expect-copy.txt
-printf 'tiny\n' > smoke-expect-tiny.txt
 host_check "new.txt contents" fat_is /new.txt smoke-expect-new.txt
 host_check "long name created" fat_is "/docs/Mixed Case Name.txt" smoke-expect-long.txt
-host_check "copy.txt matches numbers.txt" fat_is /copy.txt smoke-expect-copy.txt
-host_check "shrunk.txt truncated" fat_is /shrunk.txt smoke-expect-tiny.txt
+host_check "copy.txt matches numbers.txt after three moves" fat_is /docs/sub/deeper/copy.txt smoke-expect-copy.txt
+host_check "cp + mv made a long-named copy" fat_is "/moved/Renamed Long.txt" smoke-expect-new.txt
+not_on_fat() { ! mtype -i "$FATDISK" "::$1" >/dev/null 2>&1; }
+host_check "rm removed shrunk.txt" not_on_fat /shrunk.txt
+host_check "rm -r removed junk/" not_on_fat /junk/a/b/x.txt
+host_check "the old copy.txt name is gone" not_on_fat /copy.txt
 perl -e 'printf "%-39s\n", "line $_ of the ATOS bulk TCP test" for 1 .. 5000' > smoke-expect-big.txt
 host_check "big.bin downloaded over TCP intact" fat_is /big.bin smoke-expect-big.txt
 rm -f smoke-expect-*.txt

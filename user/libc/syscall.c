@@ -4,6 +4,8 @@
 #include <string.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -52,6 +54,23 @@ int close(int fd) {
 
 off_t lseek(int fd, off_t offset, int whence) {
     return check(syscall3(SYS_SEEK, fd, offset, whence));
+}
+
+int mkdir(const char *path, mode_t mode) {
+    (void)mode;
+    return (int)check(syscall3(SYS_MKDIR, (long)path, 0, 0));
+}
+
+int unlink(const char *path) {
+    return (int)check(syscall3(SYS_UNLINK, (long)path, 0, 0));
+}
+
+int rmdir(const char *path) {
+    return (int)check(syscall3(SYS_RMDIR, (long)path, 0, 0));
+}
+
+int rename(const char *old_path, const char *new_path) {
+    return (int)check(syscall3(SYS_RENAME, (long)old_path, (long)new_path, 0));
 }
 
 int readdir(int fd, unsigned long index, struct atos_dirent *ent) {

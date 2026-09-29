@@ -23,6 +23,13 @@ struct vnode_ops {
     int (*lookup)(struct vnode *dir, const char *name, struct vnode **out);
     int (*readdir)(struct vnode *dir, uint64_t index, struct atos_dirent *out);
     int (*create)(struct vnode *dir, const char *name, struct vnode **out);
+    int (*mkdir)(struct vnode *dir, const char *name);
+    /* Removes a file (want_dir 0) or an empty directory (want_dir 1):
+     * -EISDIR / -ENOTDIR on a mismatch, -ENOTEMPTY, -EBUSY while open. */
+    int (*remove)(struct vnode *dir, const char *name, int want_dir);
+    /* Moves `name` in `dir` to `new_name` in `new_dir` (same filesystem;
+     * the VFS checks). An existing file target is replaced. */
+    int (*rename)(struct vnode *dir, const char *name, struct vnode *new_dir, const char *new_name);
 
     int (*truncate)(struct vnode *vn, uint64_t size);
     void (*release)(struct vnode *vn);
@@ -57,6 +64,10 @@ struct file {
 };
 
 int vfs_open(const char *path, int flags, struct file **out);
+int vfs_mkdir(const char *path);
+int vfs_unlink(const char *path);
+int vfs_rmdir(const char *path);
+int vfs_rename(const char *old_path, const char *new_path);
 void file_ref(struct file *f);
 void file_close(struct file *f);
 

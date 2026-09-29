@@ -105,6 +105,8 @@ const char *strerror(int err) {
     case ENOMEM:       return "out of memory";
     case EFAULT:       return "bad address";
     case EEXIST:       return "file exists";
+    case EBUSY:        return "resource busy";
+    case EXDEV:        return "cross-device link";
     case ENOTDIR:      return "not a directory";
     case EISDIR:       return "is a directory";
     case EINVAL:       return "invalid argument";

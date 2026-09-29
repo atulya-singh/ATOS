@@ -25,6 +25,8 @@ pid_t fork(void);
 int execv(const char *path, char *const argv[]);
 pid_t getpid(void);
 int dup2(int oldfd, int newfd);
+int unlink(const char *path);
+int rmdir(const char *path);
 __attribute__((noreturn)) void _exit(int code);
 /* ATOS_REBOOT_POWEROFF or ATOS_REBOOT_RESTART; returns only on failure. */
 int reboot(int how);

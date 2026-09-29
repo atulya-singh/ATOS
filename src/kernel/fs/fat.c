@@ -16,9 +16,12 @@
  * buffer.
  *
  * Writing supports creating files (with long names where needed), growing
- * them, and truncating them; not yet mkdir, unlink, or rename. Each open
- * gets its own fat_node, so two opens of one file don't see each other's
- * size changes until reopened. */
+ * and truncating them, mkdir, removing files and empty directories, and
+ * rename. Each open gets its own fat_node, so two opens of one file don't
+ * see each other's size changes until reopened. The volume keeps a list
+ * of live nodes: removing an open file is refused (-EBUSY) rather than
+ * leaving a node that points at freed clusters, and rename re-points the
+ * nodes of the entry it moves. */
 
 struct bpb {
     uint8_t  jump[3];
@@ -97,6 +100,7 @@ struct fat_fs {
     uint8_t fat_cache[BLOCK_SECTOR_SIZE];
     uint32_t fat_cache_lba; /* 0 = empty (the FAT never starts at LBA 0) */
     uint8_t *cluster_buf;
+    struct fat_node *live; /* every node but the root, under `lock` */
 };
 
 /* One open file or directory. `vn` first so vnode pointers convert back. */
@@ -114,6 +118,8 @@ struct fat_node {
      * walk the FAT once instead of once per cluster (O(n) not O(n^2)). */
     uint32_t cursor_index;
     uint32_t cursor_cluster;
+
+    struct fat_node *live_next;
 };
 
 static const struct vnode_ops file_ops;
@@ -180,6 +186,10 @@ struct entry {
     struct raw_dirent raw;
     uint32_t cluster; /* where the 8.3 entry lives */
     uint32_t offset;
+    /* Where the entry's run of slots starts: its first long-name piece,
+     * or the 8.3 entry itself when it has no long name. */
+    uint32_t first_cluster;
+    uint32_t first_offset;
 };
 
 /* Calls visit() for each live entry of the directory starting at
@@ -194,6 +204,7 @@ static int dir_iterate(struct fat_fs *fs, uint32_t dir_cluster,
     char lfn[20 * 13 + 1];
     int lfn_pieces = 0;
     uint8_t lfn_checksum = 0;
+    uint32_t lfn_cluster = 0, lfn_offset = 0;
     struct entry e;
 
     uint32_t c = dir_cluster;
@@ -219,6 +230,8 @@ static int dir_iterate(struct fat_fs *fs, uint32_t dir_cluster,
                     lfn_pieces = seq;
                     lfn_checksum = b[13];
                     lfn[seq * 13] = '\0';
+                    lfn_cluster = c;
+                    lfn_offset = off;
                 }
                 for (int i = 0; i < LFN_CHARS_PER_ENTRY; i++) {
                     uint16_t ch = (uint16_t)(b[lfn_char_offsets[i]] | (b[lfn_char_offsets[i] + 1] << 8));
@@ -232,11 +245,15 @@ static int dir_iterate(struct fat_fs *fs, uint32_t dir_cluster,
                 continue;
             }
 
+            e.first_cluster = c;
+            e.first_offset = off;
             if (lfn_pieces && lfn_checksum == fat_name_checksum(d->name) && lfn[0]) {
                 size_t len = strnlen(lfn, sizeof(lfn));
                 if (len >= ATOS_NAME_MAX) len = ATOS_NAME_MAX - 1;
                 memcpy(e.name, lfn, len);
                 e.name[len] = '\0';
+                e.first_cluster = lfn_cluster;
+                e.first_offset = lfn_offset;
             } else {
                 fat_name_decode(d->name, d->ntres, e.name);
             }
@@ -255,6 +272,8 @@ static int dir_iterate(struct fat_fs *fs, uint32_t dir_cluster,
     return 0;
 }
 
+/* A node for the entry `e`, on the volume's live list. Called with the
+ * volume locked. */
 static struct fat_node *node_new(struct fat_fs *fs, const struct entry *e) {
     struct fat_node *n = kmalloc(sizeof(*n));
     if (!n) return NULL;
@@ -269,6 +288,8 @@ static struct fat_node *node_new(struct fat_fs *fs, const struct entry *e) {
     n->vn.ops = is_dir ? &dir_ops : &file_ops;
     n->vn.fs_data = fs;
     n->vn.refcount = 1;
+    n->live_next = fs->live;
+    fs->live = n;
     return n;
 }
 
@@ -319,11 +340,10 @@ static int fat_lookup(struct vnode *dir, const char *name, struct vnode **out) {
 
     mutex_lock(&fs->lock);
     int r = dir_iterate(fs, d->first_cluster, lookup_visit, &lc);
+    struct fat_node *n = r == 1 ? node_new(fs, &lc.found) : NULL;
     mutex_unlock(&fs->lock);
     if (r < 0) return r;
     if (r == 0) return -ENOENT;
-
-    struct fat_node *n = node_new(fs, &lc.found);
     if (!n) return -ENOMEM;
     *out = &n->vn;
     return 0;
@@ -655,37 +675,33 @@ static int write_slot(struct fat_fs *fs, const struct slot *s, const void *entry
     return write_cluster(fs, s->cluster, fs->cluster_buf);
 }
 
-static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
-    struct fat_node *d = (struct fat_node *)dir;
-    struct fat_fs *fs = d->fs;
-    if (!fat_name_valid(name)) return -EINVAL;
-
-    mutex_lock(&fs->lock);
-    struct lookup_ctx lc = {.name = name};
-    int err = dir_iterate(fs, d->first_cluster, lookup_visit, &lc);
-    if (err > 0) err = -EEXIST;
-    if (err) goto out;
-
-    struct raw_dirent entry;
-    memset(&entry, 0, sizeof(entry));
+/* Writes a new directory entry named `name` into the directory at
+ * `dir_cluster`: long-name pieces if the name needs them, then the 8.3
+ * entry, which is `tmpl` (attributes, first cluster, size, times) with
+ * the name fields filled in. The caller has checked `name` is free.
+ * Reports where the 8.3 entry landed. */
+static int add_entry(struct fat_fs *fs, uint32_t dir_cluster, const char *name,
+                     const struct raw_dirent *tmpl, struct slot *where) {
+    struct raw_dirent entry = *tmpl;
+    int err = 0;
     unsigned lfn_entries = 0;
     if (!fat_name_exact(name, entry.name, &entry.ntres) ||
-        short_name_taken(fs, d->first_cluster, entry.name, &err)) {
-        if (err) goto out;
+        short_name_taken(fs, dir_cluster, entry.name, &err)) {
+        if (err) return err;
         entry.ntres = 0;
         unsigned n = 1;
         for (;; n++) {
             fat_name_alias(name, n, entry.name);
-            if (!short_name_taken(fs, d->first_cluster, entry.name, &err)) break;
-            if (err) goto out;
-            if (n == 999999) { err = -EEXIST; goto out; }
+            if (!short_name_taken(fs, dir_cluster, entry.name, &err)) break;
+            if (err) return err;
+            if (n == 999999) return -EEXIST;
         }
         lfn_entries = (unsigned)((strlen(name) + LFN_CHARS_PER_ENTRY - 1) / LFN_CHARS_PER_ENTRY);
     }
 
     struct slot slots[MAX_DIR_SLOTS];
-    err = find_slots(fs, d->first_cluster, lfn_entries + 1, slots);
-    if (err) goto out;
+    err = find_slots(fs, dir_cluster, lfn_entries + 1, slots);
+    if (err) return err;
 
     /* Long-name pieces go last-piece-first, then the 8.3 entry itself. */
     uint8_t checksum = fat_name_checksum(entry.name);
@@ -704,15 +720,103 @@ static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
             lfn[lfn_char_offsets[k] + 1] = (uint8_t)(ch >> 8);
         }
         err = write_slot(fs, &slots[i], lfn);
-        if (err) goto out;
+        if (err) return err;
     }
-
-    entry.attr = ATTR_ARCHIVE;
-    stamp_dirent(&entry, 1);
     err = write_slot(fs, &slots[lfn_entries], &entry);
+    if (!err) *where = slots[lfn_entries];
+    return err;
+}
+
+/* Marks every slot of an entry (its long-name pieces and the 8.3 entry)
+ * deleted. The run is contiguous but may cross into the next cluster. */
+static int delete_entry(struct fat_fs *fs, const struct entry *e) {
+    uint32_t c = e->first_cluster, off = e->first_offset;
+    for (;;) {
+        int err = read_cluster(fs, c, fs->cluster_buf);
+        if (err) return err;
+        for (; off < fs->cluster_bytes; off += sizeof(struct raw_dirent)) {
+            fs->cluster_buf[off] = DIRENT_DELETED;
+            if (c == e->cluster && off == e->offset) return write_cluster(fs, c, fs->cluster_buf);
+        }
+        err = write_cluster(fs, c, fs->cluster_buf);
+        if (!err) err = fat_get(fs, c, &c);
+        if (err) return err;
+        if (!valid_cluster(fs, c)) return -EIO;
+        off = 0;
+    }
+}
+
+/* Looks `name` up in a directory: 1 and *out if found, 0 if not, or -errno. */
+static int find_entry(struct fat_fs *fs, uint32_t dir_cluster, const char *name, struct entry *out) {
+    struct lookup_ctx lc = {.name = name};
+    int r = dir_iterate(fs, dir_cluster, lookup_visit, &lc);
+    if (r == 1) *out = lc.found;
+    return r;
+}
+
+static uint32_t entry_cluster(const struct raw_dirent *d) {
+    return ((uint32_t)d->cluster_hi << 16) | d->cluster_lo;
+}
+
+/* Whether some open node refers to the entry whose 8.3 slot is here. */
+static int entry_busy(struct fat_fs *fs, const struct entry *e) {
+    for (struct fat_node *n = fs->live; n; n = n->live_next) {
+        if (n->dirent_cluster == e->cluster && n->dirent_offset == e->offset) return 1;
+    }
+    return 0;
+}
+
+static int any_visit(void *ctx, const struct entry *e) {
+    (void)ctx;
+    (void)e;
+    return 1;
+}
+
+/* What a ".." entry stores for the directory at `cluster`: 0 means root. */
+static uint32_t parent_ref(struct fat_fs *fs, uint32_t cluster) {
+    return cluster == fs->root_cluster ? 0 : cluster;
+}
+
+/* Whether the directory at `dir` is `ancestor` or lies somewhere below it,
+ * found by following ".." entries up to the root. */
+static int dir_within(struct fat_fs *fs, uint32_t dir, uint32_t ancestor, int *err) {
+    uint32_t c = dir;
+    for (int depth = 0; depth < 4096; depth++) {
+        if (c == ancestor) return 1;
+        if (c == fs->root_cluster) return 0;
+        *err = read_cluster(fs, c, fs->cluster_buf);
+        if (*err) return 0;
+        const struct raw_dirent *dotdot = (const struct raw_dirent *)(fs->cluster_buf + sizeof(struct raw_dirent));
+        if (memcmp(dotdot->name, "..         ", 11) != 0) break;
+        uint32_t up = entry_cluster(dotdot);
+        c = up ? up : fs->root_cluster;
+    }
+    *err = -EIO; /* no ".." where one belongs, or a loop */
+    return 0;
+}
+
+static int fat_create(struct vnode *dir, const char *name, struct vnode **out) {
+    struct fat_node *d = (struct fat_node *)dir;
+    struct fat_fs *fs = d->fs;
+    if (!fat_name_valid(name)) return -EINVAL;
+
+    mutex_lock(&fs->lock);
+    struct entry e;
+    int err = find_entry(fs, d->first_cluster, name, &e);
+    if (err > 0) err = -EEXIST;
     if (err) goto out;
 
-    struct entry e = {.raw = entry, .cluster = slots[lfn_entries].cluster, .offset = slots[lfn_entries].offset};
+    memset(&e, 0, sizeof(e));
+    e.raw.attr = ATTR_ARCHIVE;
+    stamp_dirent(&e.raw, 1);
+    struct slot at;
+    err = add_entry(fs, d->first_cluster, name, &e.raw, &at);
+    if (err) goto out;
+
+    /* add_entry filled the name into its own copy; the node only needs
+     * the location and the (empty) cluster and size. */
+    e.cluster = at.cluster;
+    e.offset = at.offset;
     struct fat_node *n = node_new(fs, &e);
     if (!n) {
         err = -ENOMEM;
@@ -725,8 +829,173 @@ out:
     return err;
 }
 
+static int fat_mkdir(struct vnode *dir, const char *name) {
+    struct fat_node *d = (struct fat_node *)dir;
+    struct fat_fs *fs = d->fs;
+    if (!fat_name_valid(name)) return -EINVAL;
+
+    mutex_lock(&fs->lock);
+    struct entry e;
+    int err = find_entry(fs, d->first_cluster, name, &e);
+    if (err > 0) err = -EEXIST;
+    if (err) goto out;
+
+    /* The new directory's first cluster, holding "." and "..". */
+    uint32_t c;
+    err = alloc_cluster(fs, &c);
+    if (err) goto out;
+    struct raw_dirent raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.attr = ATTR_DIRECTORY;
+    stamp_dirent(&raw, 1);
+
+    memset(fs->cluster_buf, 0, fs->cluster_bytes);
+    struct raw_dirent *dots = (struct raw_dirent *)fs->cluster_buf;
+    dots[0] = raw;
+    memcpy(dots[0].name, ".          ", 11);
+    dots[0].cluster_hi = (uint16_t)(c >> 16);
+    dots[0].cluster_lo = (uint16_t)c;
+    dots[1] = raw;
+    memcpy(dots[1].name, "..         ", 11);
+    uint32_t up = parent_ref(fs, d->first_cluster);
+    dots[1].cluster_hi = (uint16_t)(up >> 16);
+    dots[1].cluster_lo = (uint16_t)up;
+    err = write_cluster(fs, c, fs->cluster_buf);
+
+    raw.cluster_hi = (uint16_t)(c >> 16);
+    raw.cluster_lo = (uint16_t)c;
+    struct slot at;
+    if (!err) err = add_entry(fs, d->first_cluster, name, &raw, &at);
+    if (err) free_chain(fs, c);
+
+out:
+    mutex_unlock(&fs->lock);
+    return err;
+}
+
+static int fat_remove(struct vnode *dir, const char *name, int want_dir) {
+    struct fat_node *d = (struct fat_node *)dir;
+    struct fat_fs *fs = d->fs;
+
+    mutex_lock(&fs->lock);
+    struct entry e;
+    int err = find_entry(fs, d->first_cluster, name, &e);
+    if (err == 0) err = -ENOENT;
+    if (err < 0) goto out;
+    err = 0;
+
+    int is_dir = (e.raw.attr & ATTR_DIRECTORY) != 0;
+    uint32_t first = entry_cluster(&e.raw);
+    if (want_dir && !is_dir) err = -ENOTDIR;
+    else if (!want_dir && is_dir) err = -EISDIR;
+    else if (entry_busy(fs, &e)) err = -EBUSY;
+    else if (is_dir) {
+        int r = dir_iterate(fs, first, any_visit, NULL);
+        err = r < 0 ? r : r ? -ENOTEMPTY : 0;
+    }
+    /* Entry first, clusters second: a crash in between leaks space
+     * (fsck reclaims it) instead of leaving an entry on freed clusters. */
+    if (!err) err = delete_entry(fs, &e);
+    if (!err && first) err = free_chain(fs, first);
+
+out:
+    mutex_unlock(&fs->lock);
+    return err;
+}
+
+static int fat_rename(struct vnode *dir, const char *name, struct vnode *new_dir, const char *new_name) {
+    struct fat_node *d = (struct fat_node *)dir;
+    struct fat_node *nd = (struct fat_node *)new_dir;
+    struct fat_fs *fs = d->fs;
+    if (!fat_name_valid(new_name)) return -EINVAL;
+
+    mutex_lock(&fs->lock);
+    struct entry src, dst;
+    int err = find_entry(fs, d->first_cluster, name, &src);
+    if (err == 0) err = -ENOENT;
+    if (err < 0) goto out;
+    err = 0;
+
+    int src_dir = (src.raw.attr & ATTR_DIRECTORY) != 0;
+    uint32_t src_first = entry_cluster(&src.raw);
+    if (src_dir && src_first && dir_within(fs, nd->first_cluster, src_first, &err)) err = -EINVAL;
+    if (err) goto out;
+
+    /* An existing target: the source itself under another spelling
+     * (FAT names ignore case), or a file to replace. */
+    int same = 0;
+    uint32_t replaced = 0;
+    int found = find_entry(fs, nd->first_cluster, new_name, &dst);
+    if (found < 0) {
+        err = found;
+        goto out;
+    }
+    if (found) {
+        same = dst.cluster == src.cluster && dst.offset == src.offset;
+        if (same && strcmp(src.name, new_name) == 0) goto out; /* nothing to do */
+        if (!same) {
+            if (src_dir || (dst.raw.attr & ATTR_DIRECTORY)) err = -EEXIST;
+            else if (entry_busy(fs, &dst)) err = -EBUSY;
+            else err = delete_entry(fs, &dst);
+            if (err) goto out;
+            replaced = entry_cluster(&dst.raw);
+        }
+    }
+
+    /* Normally the new entry is written before the old one goes, so a
+     * crash leaves two names rather than none. A respelling has to free
+     * its own name first; if the new one can't be written, put it back. */
+    struct slot at;
+    if (same) {
+        err = delete_entry(fs, &src);
+        if (!err) err = add_entry(fs, nd->first_cluster, new_name, &src.raw, &at);
+        if (err) {
+            add_entry(fs, d->first_cluster, src.name, &src.raw, &at);
+            goto out;
+        }
+    } else {
+        err = add_entry(fs, nd->first_cluster, new_name, &src.raw, &at);
+        if (!err) err = delete_entry(fs, &src);
+        if (err) goto out;
+    }
+
+    /* A directory that changed parents must have its ".." follow. */
+    if (src_dir && src_first && d->first_cluster != nd->first_cluster) {
+        err = read_cluster(fs, src_first, fs->cluster_buf);
+        if (!err) {
+            struct raw_dirent *dotdot = (struct raw_dirent *)(fs->cluster_buf + sizeof(struct raw_dirent));
+            uint32_t up = parent_ref(fs, nd->first_cluster);
+            dotdot->cluster_hi = (uint16_t)(up >> 16);
+            dotdot->cluster_lo = (uint16_t)up;
+            err = write_cluster(fs, src_first, fs->cluster_buf);
+        }
+    }
+    for (struct fat_node *n = fs->live; n; n = n->live_next) {
+        if (n->dirent_cluster == src.cluster && n->dirent_offset == src.offset) {
+            n->dirent_cluster = at.cluster;
+            n->dirent_offset = at.offset;
+        }
+    }
+    if (!err && replaced) err = free_chain(fs, replaced);
+
+out:
+    mutex_unlock(&fs->lock);
+    return err;
+}
+
 static void fat_release(struct vnode *vn) {
-    kfree(vn); /* the root holds a permanent reference, so it never gets here */
+    /* The root holds a permanent reference, so it never gets here. */
+    struct fat_node *n = (struct fat_node *)vn;
+    struct fat_fs *fs = n->fs;
+    mutex_lock(&fs->lock);
+    for (struct fat_node **pp = &fs->live; *pp; pp = &(*pp)->live_next) {
+        if (*pp == n) {
+            *pp = n->live_next;
+            break;
+        }
+    }
+    mutex_unlock(&fs->lock);
+    kfree(n);
 }
 
 static const struct vnode_ops file_ops = {
@@ -739,6 +1008,9 @@ static const struct vnode_ops dir_ops = {
     .lookup = fat_lookup,
     .readdir = fat_readdir,
     .create = fat_create,
+    .mkdir = fat_mkdir,
+    .remove = fat_remove,
+    .rename = fat_rename,
     .release = fat_release,
 };
 

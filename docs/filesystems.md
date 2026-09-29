@@ -8,7 +8,8 @@ Every file, directory, device, and socket is a **vnode** with an ops
 table:
 
 - `read` and `write`, at a byte offset
-- `lookup`, `readdir`, and `create`, for directories
+- `lookup`, `readdir`, `create`, `mkdir`, `remove`, and `rename`, for
+  directories
 - `truncate`
 - `release`
 
@@ -22,6 +23,10 @@ Vnodes are refcounted. `release` runs when the last reference drops.
   and access flags. It is refcounted, so it can be shared by `dup2` and
   `fork`.
 - **fd tables.** Each task has a table of 16 descriptors.
+- **Namespace changes.** `vfs_mkdir`, `vfs_unlink`, `vfs_rmdir`, and
+  `vfs_rename` resolve the parent directory and hand the leaf name to its
+  ops. Mount points can't be removed or renamed (`-EBUSY`), and a rename
+  across filesystems fails with `-EXDEV`.
 
 ## initrd (`initrd.c`, `tar.c`)
 
@@ -57,8 +62,19 @@ table) is mounted at `/disk`.
   pulling the plug never leaves the mirrors disagreeing.
 - **FSInfo.** Its hints are marked "unknown" rather than maintained, so
   they can never be wrong.
+- **Directories.** `mkdir` writes `.` and `..` into a fresh cluster.
+  `rmdir` requires the directory to be empty. Removing marks every slot of
+  the entry (long-name pieces too) deleted, then frees the cluster chain.
+- **Rename.** The new entry is written before the old one is deleted, so
+  a crash leaves two names, never none. An existing file at the target is
+  replaced; an existing directory is not (`-EEXIST`). A directory that
+  changes parent gets its `..` rewritten. Moving a directory into its own
+  subtree is caught by walking `..` up from the target (`-EINVAL`).
+  Case-only renames (`a.txt` to `A.txt`) work.
+- **Open files.** The volume keeps a list of live nodes. Removing an open
+  file or directory fails with `-EBUSY` instead of leaving a node on
+  freed clusters, and rename re-points the nodes of the entry it moves.
 - **Locking.** One mutex per volume serializes access.
-- **Not yet supported:** mkdir, unlink, rename.
 
 `fat_names.c` holds the name codec (8.3 encoding, LFN checksums, alias
 generation, date/time encoding). It is hardware-free and host-tested.

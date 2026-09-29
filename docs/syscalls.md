@@ -49,6 +49,10 @@ callers loop, as with any short I/O.
 | 24 | netinfo | `struct atos_netinfo *` | 0, or `-ENODEV` |
 | 25 | uptime | — | milliseconds since boot |
 | 26 | sleep | milliseconds | 0 |
+| 27 | mkdir | path | 0 |
+| 28 | unlink | path (files only) | 0 |
+| 29 | rmdir | path (empty directories only) | 0 |
+| 30 | rename | old path, new path | 0 |
 
 A socket is a file descriptor, so `read`, `write`, `close`, `dup2`, and
 inheritance across `fork` all work on it. See [net.md](net.md) for socket

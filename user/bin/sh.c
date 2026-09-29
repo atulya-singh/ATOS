@@ -68,7 +68,8 @@ static int split_words(char *line, char **words, int max) {
 static void help(void) {
     printf("Built-ins: help, exit [code]\n"
            "Programs (in /bin): ls [dir], cat file..., echo words..., wc file..., libctest,\n"
-           "                    poweroff, reboot\n"
+           "                    cp src dst, mv src dst, rm [-r] path..., mkdir [-p] dir...,\n"
+           "                    rmdir dir..., poweroff, reboot\n"
            "Network: ifconfig, ping [-c n] host, nslookup name [server[:port]],\n"
            "         wget [-O file] http://host[:port]/path, httpd [-n count] [port]\n"
            "Ports (in /usr/bin): see pkg list\n"

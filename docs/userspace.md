@@ -33,6 +33,7 @@ fault.
 | `init` | Shows `/etc/motd`, runs `/bin/sh`, and restarts it when it exits |
 | `sh` | The shell: runs commands (searching `/bin`, then `/usr/bin`), handles `>` and `>>` redirection and quoted words, prints `[exit N]` for failures. Built-ins: `help`, `exit` |
 | `ls`, `cat`, `echo`, `wc` | The classics |
+| `cp`, `mv`, `rm [-r]`, `mkdir [-p]`, `rmdir` | File management (on `/disk`; the initrd is read-only) |
 | `libctest` | libc and kernel conformance checks, run by the smoke test |
 | `poweroff`, `reboot` | Through ACPI |
 | `ifconfig`, `ping`, `nslookup`, `wget`, `httpd` | Networking (see [net.md](net.md)) |

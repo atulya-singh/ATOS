@@ -9,7 +9,7 @@ Limine and runs on up to 16 CPUs.
   - ELF processes with `fork`/`exec`/`waitpid`
   - Panic screen with a symbolized backtrace
 - **Storage:** VFS with a tar initrd, devfs, and a read/write FAT32
-  driver (with long file names) over virtio-blk
+  driver (long file names, mkdir, rename, delete) over virtio-blk
 - **Networking:** virtio-net and an IPv4 stack (ARP, ICMP, UDP, TCP)
   with BSD sockets, plus `ping`, `nslookup`, `wget`, and an `httpd`
 - **Hardware:** ACPI power-off and reboot, LAPIC/IOAPIC, PCI

@@ -14,3 +14,4 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
 int vdprintf(int fd, const char *fmt, va_list ap);
 int putchar(int c);
 int puts(const char *s);
+int rename(const char *old_path, const char *new_path);

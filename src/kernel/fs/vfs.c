@@ -83,25 +83,102 @@ int vfs_lookup(const char *path, struct vnode **out) {
     return resolve(norm, out);
 }
 
-/* Creates the last component of a normalized path inside its parent. */
-static int create_at(const char *norm, struct vnode **out) {
+/* Whether a normalized path is some filesystem's mount point, which can
+ * be neither removed nor renamed. */
+static int is_mount_point(const char *norm) {
+    for (unsigned i = 0; i < mount_count; i++) {
+        if (strcmp(norm, mounts[i].path) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Resolves the parent directory of a normalized path and points *leaf at
+ * its last component. -EINVAL for "/" itself. */
+static int resolve_parent(const char *norm, struct vnode **dir, const char **leaf) {
     char parent[VFS_PATH_MAX];
     size_t len = strlen(norm);
     size_t slash = len;
     while (slash > 0 && norm[slash - 1] != '/') slash--;
-    if (slash == 0 || slash == len) return -EINVAL; /* "/" itself */
-    const char *leaf = norm + slash;
+    if (slash == 0 || slash == len) return -EINVAL;
+    *leaf = norm + slash;
 
     memcpy(parent, norm, slash);
     parent[slash > 1 ? slash - 1 : 1] = '\0';
-
-    struct vnode *dir;
-    int err = resolve(parent, &dir);
+    int err = resolve(parent, dir);
     if (err) return err;
-    if (dir->type != ATOS_TYPE_DIR) err = -ENOTDIR;
-    else if (!dir->ops->create) err = -EROFS;
-    else err = dir->ops->create(dir, leaf, out);
+    if ((*dir)->type != ATOS_TYPE_DIR) {
+        vnode_release(*dir);
+        return -ENOTDIR;
+    }
+    return 0;
+}
+
+/* Creates the last component of a normalized path inside its parent. */
+static int create_at(const char *norm, struct vnode **out) {
+    struct vnode *dir;
+    const char *leaf;
+    int err = resolve_parent(norm, &dir, &leaf);
+    if (err) return err;
+    err = dir->ops->create ? dir->ops->create(dir, leaf, out) : -EROFS;
     vnode_release(dir);
+    return err;
+}
+
+int vfs_mkdir(const char *path) {
+    char norm[VFS_PATH_MAX];
+    int err = path_normalize(path, norm);
+    if (err) return err;
+    if (is_mount_point(norm)) return -EEXIST;
+    struct vnode *dir;
+    const char *leaf;
+    err = resolve_parent(norm, &dir, &leaf);
+    if (err) return err;
+    err = dir->ops->mkdir ? dir->ops->mkdir(dir, leaf) : -EROFS;
+    vnode_release(dir);
+    return err;
+}
+
+static int remove_path(const char *path, int want_dir) {
+    char norm[VFS_PATH_MAX];
+    int err = path_normalize(path, norm);
+    if (err) return err;
+    if (is_mount_point(norm)) return -EBUSY;
+    struct vnode *dir;
+    const char *leaf;
+    err = resolve_parent(norm, &dir, &leaf);
+    if (err) return err;
+    err = dir->ops->remove ? dir->ops->remove(dir, leaf, want_dir) : -EROFS;
+    vnode_release(dir);
+    return err;
+}
+
+int vfs_unlink(const char *path) { return remove_path(path, 0); }
+int vfs_rmdir(const char *path) { return remove_path(path, 1); }
+
+int vfs_rename(const char *old_path, const char *new_path) {
+    char old_norm[VFS_PATH_MAX], new_norm[VFS_PATH_MAX];
+    int err = path_normalize(old_path, old_norm);
+    if (!err) err = path_normalize(new_path, new_norm);
+    if (err) return err;
+    if (is_mount_point(old_norm) || is_mount_point(new_norm)) return -EBUSY;
+
+    struct vnode *old_dir, *new_dir;
+    const char *old_leaf, *new_leaf;
+    err = resolve_parent(old_norm, &old_dir, &old_leaf);
+    if (err) return err;
+    err = resolve_parent(new_norm, &new_dir, &new_leaf);
+    if (err) {
+        vnode_release(old_dir);
+        return err;
+    }
+    /* Both ends must be on the same filesystem. (Moving a directory into
+     * its own subtree is the filesystem's to catch: FAT names are
+     * case-insensitive, so a lexical prefix check here would miss some.) */
+    if (!old_dir->ops->rename) err = -EROFS;
+    else if (old_dir->ops != new_dir->ops || old_dir->fs_data != new_dir->fs_data) err = -EXDEV;
+    else err = old_dir->ops->rename(old_dir, old_leaf, new_dir, new_leaf);
+    vnode_release(old_dir);
+    vnode_release(new_dir);
     return err;
 }
 

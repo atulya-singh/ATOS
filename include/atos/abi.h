@@ -34,6 +34,10 @@
 #define SYS_NETINFO 24 /* netinfo(struct atos_netinfo *) -> 0, or -ENODEV without a NIC */
 #define SYS_UPTIME  25 /* uptime() -> milliseconds since boot (timer-tick resolution) */
 #define SYS_SLEEP   26 /* sleep(ms) -> 0 */
+#define SYS_MKDIR   27 /* mkdir(path) -> 0 */
+#define SYS_UNLINK  28 /* unlink(path) -> 0; files only */
+#define SYS_RMDIR   29 /* rmdir(path) -> 0; empty directories only */
+#define SYS_RENAME  30 /* rename(old, new) -> 0; replaces an existing file at new */
 
 #define ATOS_REBOOT_POWEROFF 0
 #define ATOS_REBOOT_RESTART  1
@@ -112,6 +116,8 @@ struct atos_stat {
 #define ENOMEM       12
 #define EFAULT       14
 #define EEXIST       17
+#define EBUSY        16
+#define EXDEV        18
 #define ENOTDIR      20
 #define EISDIR       21
 #define EINVAL       22
