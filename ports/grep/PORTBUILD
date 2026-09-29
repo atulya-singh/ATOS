@@ -1,0 +1,5 @@
+PORT_VERSION=1.0
+PORT_DESCRIPTION="search files for lines matching a regular expression"
+PORT_LICENSE=MIT
+PORT_PROGRAMS="grep"
+grep_SRCS="grep.c regex.c"

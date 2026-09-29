@@ -1,0 +1,22 @@
+There are two hard problems in computer science: cache invalidation,
+naming things, and off-by-one errors.
+%
+The kernel is the part of the system that runs when nothing is going wrong,
+and the part you debug when everything is.
+%
+A triple fault is the CPU's way of saying it has no further comments.
+%
+Weeks of debugging can save you hours of reading the manual.
+%
+It's not a bug in the scheduler until you've ruled out the stack.
+%
+Every interrupt handler is a race condition waiting for a second CPU.
+%
+Premature optimization is the root of all evil. -- Donald Knuth
+%
+Simplicity is prerequisite for reliability. -- Edsger W. Dijkstra
+%
+Make it work, make it right, make it fast. -- Kent Beck
+%
+The network is reliable, latency is zero, and bandwidth is infinite.
+(The first three fallacies of distributed computing.)

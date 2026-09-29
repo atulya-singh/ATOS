@@ -87,6 +87,13 @@ build/bin/%: build/user/bin/%.c.o $(LIBC_OBJS) user/user.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(ULDFLAGS) $< $(LIBC_OBJS) -o $@
 
+# --- ports -------------------------------------------------------------------
+# Third-party-style programs under ports/<name>/, each with a PORTBUILD
+# recipe; tools/port.sh builds one into build/ports/<name>/root/, which is
+# merged into the initrd (programs land in /usr/bin). See docs/ports.md.
+PORTS := $(notdir $(patsubst %/PORTBUILD,%,$(wildcard ports/*/PORTBUILD)))
+PORT_STAMPS := $(foreach p,$(PORTS),build/ports/$(p)/.built)
+
 # --- initrd ------------------------------------------------------------------
 INITRD := initrd.tar
 INITRD_ROOT := build/initrd
@@ -110,7 +117,7 @@ $(HOST_TEST_BIN): $(HOST_TEST_SRCS) $(HOST_TEST_KERNEL_SRCS) $(wildcard tests/ho
 test-host: $(HOST_TEST_BIN)
 	./$(HOST_TEST_BIN)
 
-.PHONY: all clean iso run debug test-host
+.PHONY: all clean iso run debug test-host ports
 
 all: $(KERNEL) $(INITRD)
 
@@ -150,12 +157,25 @@ $(KERNEL): $(OBJ_FILES) $(KSYMS_DIR)/ksyms.o linker.ld
 # The initrd is a ustar archive of rootfs/, the userspace programs in /bin,
 # and the mount-point directories the kernel attaches other filesystems to.
 # Limine loads it as a module and the kernel mounts it at /.
-$(INITRD): $(ROOTFS_FILES) $(USER_BINS)
+$(INITRD): $(ROOTFS_FILES) $(USER_BINS) $(PORT_STAMPS)
 	rm -rf $(INITRD_ROOT)
-	mkdir -p $(INITRD_ROOT)/dev $(INITRD_ROOT)/disk $(INITRD_ROOT)/bin
+	mkdir -p $(INITRD_ROOT)/dev $(INITRD_ROOT)/disk $(INITRD_ROOT)/bin \
+		$(INITRD_ROOT)/usr/bin $(INITRD_ROOT)/usr/share/ports
 	cp -R rootfs/. $(INITRD_ROOT)/
 	cp $(USER_BINS) $(INITRD_ROOT)/bin/
+	for p in $(PORTS); do cp -R build/ports/$$p/root/. $(INITRD_ROOT)/; done
+	cat /dev/null $(foreach p,$(PORTS),build/ports/$(p)/index-line) \
+		> $(INITRD_ROOT)/usr/share/ports/INDEX
 	tar --format=ustar -cf $@ -C $(INITRD_ROOT) $$(ls $(INITRD_ROOT))
+
+ports: $(PORT_STAMPS)
+
+# Rebuilt when anything in the port's directory changes (hence the second
+# expansion, which lets the prerequisite list use the stem).
+.SECONDEXPANSION:
+build/ports/%/.built: $$(wildcard ports/$$*/*) $(LIBC_OBJS) user/user.ld tools/port.sh
+	CC="$(CC)" LD="$(LD)" UCFLAGS="$(UCFLAGS)" ULDFLAGS="$(ULDFLAGS)" LIBC_OBJS="$(LIBC_OBJS)" \
+		./tools/port.sh ports/$* build/ports/$*
 
 # .incbin'd data isn't seen by -MMD, so spell this dependency out.
 src/kernel/dev/font.o: third_party/fonts/terminus-8x16.psf

@@ -69,6 +69,14 @@ type_line() {
             /)        keys+=("sendkey slash") ;;
             .)        keys+=("sendkey dot") ;;
             :)        keys+=("sendkey shift-semicolon") ;;
+            '(')      keys+=("sendkey shift-9") ;;
+            ')')      keys+=("sendkey shift-0") ;;
+            '*')      keys+=("sendkey shift-8") ;;
+            +)        keys+=("sendkey shift-equal") ;;
+            '^')      keys+=("sendkey shift-6") ;;
+            '$')      keys+=("sendkey shift-4") ;;
+            '[')      keys+=("sendkey bracket_left") ;;
+            ']')      keys+=("sendkey bracket_right") ;;
             -)        keys+=("sendkey minus") ;;
             '>')      keys+=("sendkey shift-dot") ;;
             '"')      keys+=("sendkey shift-apostrophe") ;;
@@ -132,6 +140,15 @@ run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "cat /disk/numbers.txt > /disk/shrunk.txt" 30
 run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "wc /disk/shrunk.txt"
+run_cmd "pkg list"
+run_cmd "pkg info fortune"
+run_cmd "calc (2+3)*4 - 0x10"
+run_cmd "/usr/bin/calc 1/0"
+run_cmd "grep -in INITRD /README"
+run_cmd "grep -c 7$ /disk/numbers.txt" 20
+run_cmd "grep -n ^1[0-2]3$ /disk/numbers.txt" 20
+run_cmd "hexdump -n 20 /README"
+run_cmd "fortune -n 7"
 run_cmd "ifconfig"
 run_cmd "ping -c 3 10.0.2.2" 20
 run_cmd "nslookup atos.test 10.0.2.2:$DNS_PORT" 15
@@ -220,6 +237,21 @@ check_line "line two"
 check_re "^ +13  Mixed Case Name.txt$"
 check_line "20000 20000 108894 /disk/copy.txt"
 check_line "1 1 5 /disk/shrunk.txt"
+check_re "^calc +1.0 +64-bit integer expression calculator$"
+check_re "^grep +1.0 +search files for lines matching a regular expression$"
+check_line "4 port(s) installed"
+check_line "  /usr/share/fortune/fortunes"
+check_line "4 (0x4)"
+check_line "calc: division by zero at ''"
+check_line "1:This file lives in the initrd, which is read-only."
+check_line "2000"
+check_line "103:103"
+check_line "113:113"
+check_line "123:123"
+check_line "00000000  54 68 69 73 20 66 69 6c  65 20 6c 69 76 65 73 20  |This file lives |"
+check_line "00000010  69 6e 20 74                                       |in t|"
+check_line "00000014"
+check_line "Premature optimization is the root of all evil. -- Donald Knuth"
 check_re "virtio-net at PCI [0-9a-f:.]+, io 0x[0-9a-f]+, MAC 52:54:00:12:34:56"
 check "net: 10.0.2.15/255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
 check_line "eth0: inet 10.0.2.15 netmask 255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"

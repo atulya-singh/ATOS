@@ -1,0 +1,5 @@
+PORT_VERSION=1.0
+PORT_DESCRIPTION="print a random adage about systems programming"
+PORT_LICENSE=MIT
+PORT_PROGRAMS="fortune"
+PORT_FILES="fortunes:/usr/share/fortune/fortunes"

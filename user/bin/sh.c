@@ -71,6 +71,7 @@ static void help(void) {
            "                    poweroff, reboot\n"
            "Network: ifconfig, ping [-c n] host, nslookup name [server[:port]],\n"
            "         wget [-O file] http://host[:port]/path, httpd [-n count] [port]\n"
+           "Ports (in /usr/bin): see pkg list\n"
            "Redirect output with > file (truncate) or >> file (append).\n");
 }
 
@@ -85,13 +86,21 @@ static void run_child(char **argv, const char *out_path, int append) {
         dup2(fd, STDOUT_FILENO);
         close(fd);
     }
-    char path[LINE_MAX];
     if (strchr(argv[0], '/')) {
-        snprintf(path, sizeof(path), "%s", argv[0]);
+        execv(argv[0], argv);
     } else {
-        snprintf(path, sizeof(path), "/bin/%s", argv[0]);
+        /* A fixed search path: base system first, then installed ports. */
+        static const char *const dirs[] = {"/bin", "/usr/bin"};
+        int err = ENOENT;
+        for (unsigned i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+            char path[LINE_MAX];
+            snprintf(path, sizeof(path), "%s/%s", dirs[i], argv[0]);
+            execv(path, argv);
+            if (errno != ENOENT) err = errno; /* found, but it wouldn't run */
+            if (err != ENOENT) break;
+        }
+        errno = err;
     }
-    execv(path, argv);
     dprintf(STDERR_FILENO, "sh: %s: %s\n", argv[0], strerror(errno));
     _exit(127);
 }

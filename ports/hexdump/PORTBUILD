@@ -1,0 +1,4 @@
+PORT_VERSION=1.0
+PORT_DESCRIPTION="canonical hex+ASCII dump of files (like hexdump -C)"
+PORT_LICENSE=MIT
+PORT_PROGRAMS="hexdump"

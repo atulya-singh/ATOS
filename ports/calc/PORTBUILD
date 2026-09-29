@@ -1,0 +1,4 @@
+PORT_VERSION=1.0
+PORT_DESCRIPTION="64-bit integer expression calculator"
+PORT_LICENSE=MIT
+PORT_PROGRAMS="calc"
