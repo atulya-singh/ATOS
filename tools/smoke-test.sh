@@ -19,15 +19,24 @@ dd if=/dev/zero of="$DISK" bs=1M count=4 status=none
 printf 'ATOSDISK' | dd of="$DISK" conv=notrunc status=none
 ./tools/mkfatdisk.sh "$FATDISK"
 
+# Network peers for the guest (see tools/net-test-server.pl): HTTP and DNS
+# on the host's loopback, which QEMU's user-mode network shows the guest
+# as 10.0.2.2. hostfwd lets the host reach the guest's port 80.
+HTTP_PORT=18080 DNS_PORT=15353 FWD_PORT=15580
+perl tools/net-test-server.pl $HTTP_PORT $DNS_PORT &
+NETSRV_PID=$!
+
 qemu-system-x86_64 -M q35 -smp 4 -m 256M -display none -no-reboot \
     -serial "file:$LOG" -monitor "unix:$MON,server,nowait" \
+    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$FWD_PORT-:80" \
+    -device virtio-net-pci,netdev=net0,disable-legacy=off \
     -drive "file=$DISK,format=raw,if=none,id=disk0" \
     -device virtio-blk-pci,drive=disk0,disable-legacy=off \
     -drive "file=$FATDISK,format=raw,if=none,id=disk1" \
     -device virtio-blk-pci,drive=disk1,disable-legacy=off \
     -cdrom atos.iso &
 QEMU_PID=$!
-trap 'kill $QEMU_PID 2>/dev/null || true; rm -f "$MON"' EXIT
+trap 'kill $QEMU_PID $NETSRV_PID 2>/dev/null || true; rm -f "$MON"' EXIT
 
 wait_for() { # wait_for <text> <seconds>
     for _ in $(seq 1 $(( $2 * 5 ))); do
@@ -59,6 +68,7 @@ type_line() {
             ' ')      keys+=("sendkey spc") ;;
             /)        keys+=("sendkey slash") ;;
             .)        keys+=("sendkey dot") ;;
+            :)        keys+=("sendkey shift-semicolon") ;;
             -)        keys+=("sendkey minus") ;;
             '>')      keys+=("sendkey shift-dot") ;;
             '"')      keys+=("sendkey shift-apostrophe") ;;
@@ -122,6 +132,24 @@ run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "cat /disk/numbers.txt > /disk/shrunk.txt" 30
 run_cmd "echo tiny > /disk/shrunk.txt"
 run_cmd "wc /disk/shrunk.txt"
+run_cmd "ifconfig"
+run_cmd "ping -c 3 10.0.2.2" 20
+run_cmd "nslookup atos.test 10.0.2.2:$DNS_PORT" 15
+run_cmd "nslookup nosuch.test 10.0.2.2:$DNS_PORT" 15
+run_cmd "wget -O - http://10.0.2.2:$HTTP_PORT/hello.txt" 20
+run_cmd "wget -O /disk/big.bin http://10.0.2.2:$HTTP_PORT/big.bin" 60
+run_cmd "wc /disk/big.bin" 20
+run_cmd "wget http://10.0.2.2:$HTTP_PORT/missing" 20
+# The guest as a server: the host fetches a file from httpd through the
+# port forward, retrying until httpd is listening.
+( for _ in $(seq 1 100); do
+      curl -sf -m 5 -o smoke-httpd.out "http://127.0.0.1:$FWD_PORT/README" && exit 0
+      sleep 0.3
+  done; exit 1 ) &
+CURL_PID=$!
+run_cmd "httpd -n 1 80" 40
+curl_ok=0
+wait $CURL_PID && curl_ok=1
 run_cmd "exit 3"
 
 # Last command: ACPI power-off must make QEMU exit by itself.
@@ -192,6 +220,27 @@ check_line "line two"
 check_re "^ +13  Mixed Case Name.txt$"
 check_line "20000 20000 108894 /disk/copy.txt"
 check_line "1 1 5 /disk/shrunk.txt"
+check_re "virtio-net at PCI [0-9a-f:.]+, io 0x[0-9a-f]+, MAC 52:54:00:12:34:56"
+check "net: 10.0.2.15/255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
+check_line "eth0: inet 10.0.2.15 netmask 255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3"
+check_line "      ether 52:54:00:12:34:56"
+check_re "^64 bytes from 10.0.2.2: icmp_seq=1 time=[0-9]+ ms$"
+check_line "3 packets transmitted, 3 received, 0% packet loss"
+check_line "Address: 192.0.2.7"
+check_line "** can't find nosuch.test: no such name (NXDOMAIN)"
+check_line "hello from the host"
+check_line "wget: saved 200000 bytes to /disk/big.bin"
+check_line "5000 40000 200000 /disk/big.bin"
+check_line "wget: server said: HTTP/1.0 404 Not Found"
+check_line "httpd: listening on port 80"
+check_line "httpd: 10.0.2.2 GET /README -> 200"
+if [ $curl_ok = 1 ] && cmp -s smoke-httpd.out rootfs/README; then
+    echo "PASS  host: fetched /README from the guest's httpd"
+else
+    echo "FAIL  host: fetched /README from the guest's httpd"
+    status=1
+fi
+rm -f smoke-httpd.out
 check "block: registered vda (8192 sectors, 4 MiB)"
 check "disk self-test: signature + 160-sector write/readback ok"
 
@@ -229,6 +278,8 @@ host_check "new.txt contents" fat_is /new.txt smoke-expect-new.txt
 host_check "long name created" fat_is "/docs/Mixed Case Name.txt" smoke-expect-long.txt
 host_check "copy.txt matches numbers.txt" fat_is /copy.txt smoke-expect-copy.txt
 host_check "shrunk.txt truncated" fat_is /shrunk.txt smoke-expect-tiny.txt
+perl -e 'printf "%-39s\n", "line $_ of the ATOS bulk TCP test" for 1 .. 5000' > smoke-expect-big.txt
+host_check "big.bin downloaded over TCP intact" fat_is /big.bin smoke-expect-big.txt
 rm -f smoke-expect-*.txt
 if command -v fsck.fat >/dev/null; then
     host_check "fsck.fat finds no errors" fsck.fat -n "$FATDISK"

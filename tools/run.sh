@@ -14,10 +14,15 @@ if [ ! -f "$DISK" ]; then
     ./tools/mkfatdisk.sh "$DISK"
 fi
 
-# disable-legacy=off: the driver speaks the legacy virtio PCI interface.
+# disable-legacy=off: the drivers speak the legacy virtio PCI interface.
+# User-mode networking: the guest is 10.0.2.15 behind QEMU's NAT, and
+# host port 8080 forwards to the guest's port 80 (try httpd in the guest,
+# then curl localhost:8080/README on the host).
 QEMU_FLAGS=(-M q35 -smp 4 -m 256M -serial stdio -no-reboot -cdrom "$ISO"
             -drive "file=$DISK,format=raw,if=none,id=disk0"
-            -device virtio-blk-pci,drive=disk0,disable-legacy=off)
+            -device virtio-blk-pci,drive=disk0,disable-legacy=off
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:8080-:80"
+            -device virtio-net-pci,netdev=net0,disable-legacy=off)
 
 if [ "${1:-}" = "--debug" ]; then
     QEMU_FLAGS+=(-s -S)

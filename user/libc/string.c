@@ -84,6 +84,14 @@ char *strrchr(const char *s, int c) {
     }
 }
 
+char *strstr(const char *haystack, const char *needle) {
+    size_t n = strlen(needle);
+    for (; *haystack; haystack++) {
+        if (strncmp(haystack, needle, n) == 0) return (char *)haystack;
+    }
+    return n == 0 ? (char *)haystack : NULL;
+}
+
 const char *strerror(int err) {
     switch (err) {
     case EPERM:        return "operation not permitted";
@@ -108,6 +116,22 @@ const char *strerror(int err) {
     case ENAMETOOLONG: return "file name too long";
     case ENOSYS:       return "function not implemented";
     case ENOTEMPTY:    return "directory not empty";
+    case ENODEV:       return "no such device";
+    case EAGAIN:       return "resource temporarily unavailable";
+    case EPIPE:        return "broken pipe";
+    case ENOTSOCK:     return "not a socket";
+    case EDESTADDRREQ: return "destination address required";
+    case EMSGSIZE:     return "message too long";
+    case EPROTOTYPE:   return "protocol wrong type for socket";
+    case EOPNOTSUPP:   return "operation not supported";
+    case EADDRINUSE:   return "address already in use";
+    case ENETUNREACH:  return "network unreachable";
+    case ECONNRESET:   return "connection reset by peer";
+    case EISCONN:      return "already connected";
+    case ENOTCONN:     return "not connected";
+    case ETIMEDOUT:    return "timed out";
+    case ECONNREFUSED: return "connection refused";
+    case EHOSTUNREACH: return "host unreachable";
     default:           return "unknown error";
     }
 }

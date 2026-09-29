@@ -17,6 +17,7 @@
 #include "dev/serial.h"
 #include "dev/timer.h"
 #include "dev/virtio_blk.h"
+#include "dev/virtio_net.h"
 #include "fs/devfs.h"
 #include "fs/fat.h"
 #include "fs/initrd.h"
@@ -28,6 +29,7 @@
 #include "mm/heap.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "net/net.h"
 #include "proc/process.h"
 #include "sched/sched.h"
 #include "selftest.h"
@@ -81,7 +83,9 @@ static void kmain_stage2(void) {
     keyboard_init();
     pci_init();
     virtio_blk_init();
+    virtio_net_init();
     mount_disk();
+    net_init();
 
     lapic_timer_calibrate(TIMER_HZ);
     smp_init();

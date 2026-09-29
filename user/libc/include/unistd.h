@@ -28,3 +28,4 @@ int dup2(int oldfd, int newfd);
 __attribute__((noreturn)) void _exit(int code);
 /* ATOS_REBOOT_POWEROFF or ATOS_REBOOT_RESTART; returns only on failure. */
 int reboot(int how);
+unsigned sleep(unsigned seconds);

@@ -7,6 +7,8 @@
 #include "../proc/process.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
+#include "../net/socket.h"
+#include "../dev/timer.h"
 #include "../sched/sched.h"
 
 /* Cap on one read/write, so a single call can't keep a task in the kernel
@@ -127,7 +129,7 @@ void syscall_handler(struct registers *regs) {
      * restores the caller's own flags on the way out. */
     asm volatile("sti");
 
-    uint64_t a0 = regs->rdi, a1 = regs->rsi, a2 = regs->rdx;
+    uint64_t a0 = regs->rdi, a1 = regs->rsi, a2 = regs->rdx, a3 = regs->r10;
     int64_t ret;
     switch (regs->rax) {
     case SYS_WRITE:   ret = sys_write((int)a0, a1, a2); break;
@@ -144,6 +146,17 @@ void syscall_handler(struct registers *regs) {
     case SYS_GETPID:  ret = (int64_t)sched_current()->id; break;
     case SYS_DUP2:    ret = fd_dup2(sched_current(), (int)a0, (int)a1); break;
     case SYS_REBOOT:  ret = sys_reboot(a0); break;
+    case SYS_SOCKET:  ret = sys_socket((int)a0); break;
+    case SYS_BIND:    ret = sys_bind((int)a0, a1); break;
+    case SYS_CONNECT: ret = sys_connect((int)a0, a1); break;
+    case SYS_LISTEN:  ret = sys_listen((int)a0, (int)a1); break;
+    case SYS_ACCEPT:  ret = sys_accept((int)a0, a1); break;
+    case SYS_SENDTO:  ret = sys_sendto((int)a0, a1, a2, a3); break;
+    case SYS_RECVFROM: ret = sys_recvfrom((int)a0, a1, a2, a3); break;
+    case SYS_SOCKOPT: ret = sys_sockopt((int)a0, (int)a1, a2); break;
+    case SYS_NETINFO: ret = sys_netinfo(a0); break;
+    case SYS_UPTIME:  ret = (int64_t)(timer_ticks() * (1000 / TIMER_HZ)); break;
+    case SYS_SLEEP:   task_sleep((a0 * TIMER_HZ + 999) / 1000); ret = 0; break;
     case SYS_YIELD:   sched_yield(); ret = 0; break;
     case SYS_EXIT:    task_exit((int)a0);
     default:          ret = -ENOSYS; break;

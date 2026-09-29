@@ -4,9 +4,9 @@
 #pragma once
 #include <stdint.h>
 
-/* int 0x80: number in %rax, arguments in %rdi, %rsi, %rdx (SysV argument
- * order, so a future syscall/sysret path keeps the same layout), result in
- * %rax. Failures return a negative errno. */
+/* int 0x80: number in %rax, arguments in %rdi, %rsi, %rdx, %r10, %r8
+ * (Linux's syscall order, so a future syscall/sysret path keeps the same
+ * layout), result in %rax. Failures return a negative errno. */
 #define SYS_WRITE   0  /* write(fd, buf, len) -> bytes written */
 #define SYS_EXIT    1  /* exit(code) -> does not return */
 #define SYS_YIELD   2  /* yield() -> 0 */
@@ -23,6 +23,17 @@
 #define SYS_GETPID  13 /* getpid() -> pid */
 #define SYS_DUP2    14 /* dup2(oldfd, newfd) -> newfd */
 #define SYS_REBOOT  15 /* reboot(ATOS_REBOOT_*) -> does not return on success */
+#define SYS_SOCKET  16 /* socket(ATOS_SOCK_*) -> fd */
+#define SYS_BIND    17 /* bind(fd, const struct atos_sockaddr_in *) -> 0 */
+#define SYS_CONNECT 18 /* connect(fd, const struct atos_sockaddr_in *) -> 0 */
+#define SYS_LISTEN  19 /* listen(fd, backlog) -> 0 */
+#define SYS_ACCEPT  20 /* accept(fd, struct atos_sockaddr_in *peer or NULL) -> new fd */
+#define SYS_SENDTO  21 /* sendto(fd, buf, len, const struct atos_sockaddr_in *dest or NULL) -> bytes sent */
+#define SYS_RECVFROM 22 /* recvfrom(fd, buf, len, struct atos_sockaddr_in *src or NULL) -> bytes, 0 at EOF */
+#define SYS_SOCKOPT 23 /* sockopt(fd, ATOS_SO_*, value) -> 0 */
+#define SYS_NETINFO 24 /* netinfo(struct atos_netinfo *) -> 0, or -ENODEV without a NIC */
+#define SYS_UPTIME  25 /* uptime() -> milliseconds since boot (timer-tick resolution) */
+#define SYS_SLEEP   26 /* sleep(ms) -> 0 */
 
 #define ATOS_REBOOT_POWEROFF 0
 #define ATOS_REBOOT_RESTART  1
@@ -43,6 +54,37 @@
 #define ATOS_TYPE_FILE    1
 #define ATOS_TYPE_DIR     2
 #define ATOS_TYPE_CHARDEV 3
+#define ATOS_TYPE_SOCKET  4
+
+/* Socket types. ICMP sockets send and receive ICMP echo messages (header
+ * included) like Linux's unprivileged ping sockets: the kernel fills in the
+ * identifier and checksum on the way out and delivers only the replies
+ * that match on the way in. */
+#define ATOS_SOCK_STREAM 1 /* TCP */
+#define ATOS_SOCK_DGRAM  2 /* UDP */
+#define ATOS_SOCK_ICMP   3
+
+/* sockopt options. */
+#define ATOS_SO_RCVTIMEO 1 /* receive/accept/connect timeout in ms; 0 = wait forever */
+
+#define ATOS_AF_INET 2
+
+/* Laid out like BSD's sockaddr_in; port and addr in network byte order. */
+struct atos_sockaddr_in {
+    uint16_t family; /* ATOS_AF_INET */
+    uint16_t port;
+    uint32_t addr;
+    uint8_t zero[8];
+};
+
+/* The (single) network interface's configuration and counters. Addresses
+ * in network byte order. */
+struct atos_netinfo {
+    uint8_t mac[6];
+    uint16_t reserved;
+    uint32_t addr, netmask, gateway, dns;
+    uint64_t rx_packets, tx_packets, rx_bytes, tx_bytes, rx_dropped;
+};
 
 #define ATOS_NAME_MAX 64 /* including the terminating NUL */
 
@@ -81,3 +123,19 @@ struct atos_stat {
 #define ENAMETOOLONG 36
 #define ENOSYS       38
 #define ENOTEMPTY    39
+#define ENODEV       19
+#define EAGAIN       11
+#define EPIPE        32
+#define ENOTSOCK     88
+#define EDESTADDRREQ 89
+#define EMSGSIZE     90
+#define EPROTOTYPE   91
+#define EOPNOTSUPP   95
+#define EADDRINUSE   98
+#define ENETUNREACH 101
+#define ECONNRESET  104
+#define EISCONN     106
+#define ENOTCONN    107
+#define ETIMEDOUT   110
+#define ECONNREFUSED 111
+#define EHOSTUNREACH 113
