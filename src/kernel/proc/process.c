@@ -119,6 +119,7 @@ int process_exec(struct registers *regs, const char *path, int argc, const char 
     regs->rip = rip;
     regs->rsp = rsp;
     regs->rflags = 0x202; /* IF */
+    fpu_reset();
     return 0;
 }
 

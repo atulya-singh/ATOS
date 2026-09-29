@@ -55,8 +55,6 @@ DEP_FILES := $(OBJ_FILES:.o=.d)
 # Same cross compiler, but hosted-style flags: no kernel code model, and
 # -nostdinc so only our libc headers (plus the compiler's freestanding
 # stddef/stdint/stdarg) are visible -- never the build host's glibc.
-# -mgeneral-regs-only: the kernel doesn't save FPU/SSE state across
-# context switches yet, so user code must not touch those registers.
 # -fno-tree-loop-distribute-patterns: stop GCC from turning libc's own
 # memset/memcpy loops into calls to memset/memcpy.
 UCFLAGS := -std=gnu11 -O2 -Wall -Wextra \
@@ -66,7 +64,7 @@ UCFLAGS := -std=gnu11 -O2 -Wall -Wextra \
            -fno-pic -fno-pie -fno-stack-protector \
            -fno-asynchronous-unwind-tables -fno-tree-loop-distribute-patterns \
            -ffunction-sections -fdata-sections \
-           -m64 -march=x86-64 -mgeneral-regs-only
+           -m64 -march=x86-64
 
 ULDFLAGS := -m elf_x86_64 -nostdlib -static -no-pie --gc-sections -T user/user.ld
 

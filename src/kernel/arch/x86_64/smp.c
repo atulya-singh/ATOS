@@ -1,4 +1,5 @@
 #include "smp.h"
+#include "fpu.h"
 #include "gdt.h"
 #include "idt.h"
 #include "lapic.h"
@@ -31,6 +32,7 @@ static __attribute__((noreturn)) void ap_main(struct cpu *c) {
     gdt_init_cpu(c, (uint64_t)(df_stack + AP_DOUBLE_FAULT_STACK));
     percpu_set(c); /* the GDT load reset %gs */
     idt_load();
+    fpu_init_cpu();
     lapic_enable_cpu();
     c->current = c->idle;
     lapic_timer_start();

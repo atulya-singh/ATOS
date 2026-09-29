@@ -23,6 +23,51 @@ static void emit_padded(struct sink *s, const char *str, size_t n, int width, in
     if (left) while (fill-- > 0) emit(s, ' ');
 }
 
+/* Formats v with `prec` digits after the point into tmp (backwards from
+ * its end, like the integer cases) and returns the length. %g drops
+ * trailing zeros. Exact up to about 1e18; beyond that it prints what a
+ * 64-bit integer part can hold, which is plenty for this libc's users. */
+static size_t format_double(char *tmp, size_t cap, double v, int prec, int strip, int *neg) {
+    size_t n = 0;
+    *neg = v < 0 || (v == 0 && 1 / v < 0);
+    if (*neg) v = -v;
+    if (v != v) {
+        memcpy(tmp + cap - 3, "nan", 3);
+        *neg = 0;
+        return 3;
+    }
+    if (v > 1.8e19) {
+        memcpy(tmp + cap - 3, "inf", 3);
+        return 3;
+    }
+    if (prec > 17) prec = 17;
+    double scale = 1;
+    for (int i = 0; i < prec; i++) scale *= 10;
+    /* Round once, at the last printed digit, then split. */
+    double whole = (double)(unsigned long)v;
+    double frac_scaled = (v - whole) * scale + 0.5;
+    unsigned long ip = (unsigned long)whole;
+    unsigned long fp = (unsigned long)frac_scaled;
+    if ((double)fp >= scale) {
+        fp -= (unsigned long)scale;
+        ip++;
+    }
+    int digits = prec;
+    if (strip) {
+        while (digits > 0 && fp % 10 == 0) {
+            fp /= 10;
+            digits--;
+        }
+    }
+    for (int i = 0; i < digits; i++) {
+        tmp[cap - 1 - n++] = (char)('0' + fp % 10);
+        fp /= 10;
+    }
+    if (digits) tmp[cap - 1 - n++] = '.';
+    do tmp[cap - 1 - n++] = (char)('0' + ip % 10); while ((ip /= 10) && n < cap - 1);
+    return n;
+}
+
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
     struct sink s = {buf, size, 0};
 
@@ -40,9 +85,14 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
             else break;
         }
         while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+        int prec = -1;
+        if (*p == '.') {
+            prec = 0;
+            for (p++; *p >= '0' && *p <= '9'; p++) prec = prec * 10 + (*p - '0');
+        }
         while (*p == 'l' || *p == 'z') { lng = 1; p++; }
 
-        char tmp[24];
+        char tmp[48];
         size_t n = 0;
         char pad = (zero && !left) ? '0' : ' ';
 
@@ -84,7 +134,22 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
         case 's': {
             const char *str = va_arg(ap, const char *);
             if (!str) str = "(null)";
-            emit_padded(&s, str, strlen(str), width, left, ' ');
+            size_t len = strlen(str);
+            if (prec >= 0 && (size_t)prec < len) len = (size_t)prec;
+            emit_padded(&s, str, len, width, left, ' ');
+            break;
+        }
+        case 'f':
+        case 'g': {
+            int neg;
+            n = format_double(tmp, sizeof(tmp) - 1, va_arg(ap, double), prec < 0 ? 6 : prec,
+                              *p == 'g', &neg);
+            char *start = tmp + sizeof(tmp) - 1 - n;
+            if (neg) {
+                if (pad == '0') { emit(&s, '-'); width--; }
+                else { *--start = '-'; n++; }
+            }
+            emit_padded(&s, start, n, width, left, pad);
             break;
         }
         case '%':

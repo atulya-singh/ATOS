@@ -8,8 +8,9 @@ A small C library, statically linked into every program:
 |------|----------|
 | `crt0.S` | `_start`: gets argc/argv from the stack, calls `main`, then `exit` |
 | `syscall.c` | POSIX-style wrappers (`read`, `write`, `open`, `fork`, `execv`, `waitpid`, `dup2`, `sbrk`, `sleep`, sockets, ...). They return -1 and set `errno` |
-| `stdio.c` | `printf`, `dprintf`, `snprintf`, `vsnprintf`, `putchar`, `puts`, over fds (no `FILE *` buffering yet) |
-| `stdlib.c` | `malloc`/`calloc`/`realloc`/`free` over `brk`, `atoi`, `exit` |
+| `stdio.c` | `printf`, `dprintf`, `snprintf`, `vsnprintf` (with `%f`/`%g` and precision), `putchar`, `puts`, over fds (no `FILE *` buffering yet) |
+| `stdlib.c` | `malloc`/`calloc`/`realloc`/`free` over `brk`, `atoi`, `strtod`/`atof`, `exit` |
+| `math.c` | A small libm on the x87: `sqrt`, `floor`/`ceil`/`round`, `fmod`, `exp`/`log`/`pow`, trig |
 | `string.c` | The `mem*`/`str*` basics, `strstr`, `strerror` |
 | `net.c` | `inet_aton`/`inet_ntoa`/`inet_addr`, a DNS resolver, `gethostbyname` |
 
@@ -18,9 +19,10 @@ Headers live in `user/libc/include/`. They mirror the POSIX names
 `netdb.h`). `atos.h` holds ATOS-only calls such as `readdir`, `fstat`,
 `netinfo`, `uptime_ms`, `msleep`, and `dns_resolve`.
 
-User code is built with `-mgeneral-regs-only`, because the kernel does
-not yet save FPU/SSE state across context switches. That means no
-floating point.
+Floating point works: the kernel saves each task's x87/SSE registers
+across context switches (see [scheduler.md](scheduler.md)). Unmasking
+an FP exception and triggering it kills the process, like any other
+fault.
 
 ## Programs
 

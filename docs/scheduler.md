@@ -45,6 +45,17 @@ New tasks do this in `task_trampoline` and `fork_return`. This hand-off
 is what makes it safe for another CPU to pick up, or the reaper to free,
 the previous task.
 
+### FPU and SSE state
+
+Each task has a 512-byte `fxsave` area (`arch/x86_64/fpu.c`). The
+kernel is built without x87/SSE instructions, so those registers only
+ever hold the running task's user state. `schedule()` saves the outgoing
+task's state and loads the incoming one's just before `context_switch`.
+This is eager: every switch pays for it, but there is no lazy
+`#NM` trap to get wrong on SMP. New tasks start from the clean state
+recorded at boot (x87 defaults, MXCSR `0x1F80`), `fork` copies the
+parent's live registers, and `exec` resets them.
+
 ## Blocking: wait queues and mutexes
 
 Blocking uses the race-free `wait_event(wq, cond)` macro. It registers

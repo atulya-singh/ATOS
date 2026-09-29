@@ -3,6 +3,7 @@
 
 #include "acpi/acpi.h"
 #include "arch/x86_64/gdt.h"
+#include "arch/x86_64/fpu.h"
 #include "arch/x86_64/idt.h"
 #include "arch/x86_64/ioapic.h"
 #include "arch/x86_64/lapic.h"
@@ -146,6 +147,8 @@ void kmain(void) {
 
     idt_init();
     kprintf("ATOS: IDT + PIC configured\n");
+
+    fpu_init_cpu();
 
     pmm_init();
 

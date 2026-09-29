@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../arch/x86_64/cpu.h"
+#include "../arch/x86_64/fpu.h"
 #include "../fs/vfs.h"
 
 enum task_state {
@@ -37,6 +38,9 @@ struct task {
 
     uint64_t user_rip, user_rsp; /* ring 3 entry point; unused by kernel threads */
     uint64_t brk_start, brk;     /* process heap: [brk_start, brk), grown by sys_brk */
+
+    /* User x87/SSE registers while switched out (see schedule()). */
+    struct fpu_state fpu;
 
     uint64_t wake_tick;
     int slice;           /* ticks left in the current time slice */

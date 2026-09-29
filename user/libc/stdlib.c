@@ -122,6 +122,51 @@ int atoi(const char *s) {
     return sign * v;
 }
 
+/* Decimal only ([-+]digits[.digits][e[-+]digits]), accumulated in a
+ * double -- good to the last digit or so, not correctly rounded. */
+double strtod(const char *s, char **end) {
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+    int neg = 0;
+    if (*p == '-' || *p == '+') neg = *p++ == '-';
+    double v = 0;
+    int digits = 0, exp10 = 0;
+    for (; *p >= '0' && *p <= '9'; p++, digits++) v = v * 10 + (*p - '0');
+    if (*p == '.') {
+        for (p++; *p >= '0' && *p <= '9'; p++, digits++) {
+            v = v * 10 + (*p - '0');
+            exp10--;
+        }
+    }
+    if (!digits) {
+        if (end) *end = (char *)s;
+        return 0;
+    }
+    if (*p == 'e' || *p == 'E') {
+        const char *q = p + 1;
+        int eneg = 0, e = 0;
+        if (*q == '-' || *q == '+') eneg = *q++ == '-';
+        if (*q >= '0' && *q <= '9') {
+            while (*q >= '0' && *q <= '9') {
+                if (e < 10000) e = e * 10 + (*q - '0');
+                q++;
+            }
+            exp10 += eneg ? -e : e;
+            p = q;
+        }
+    }
+    /* Scale by 10^|exp10| through repeated squaring. */
+    double scale = 1, base = 10;
+    for (int e = exp10 < 0 ? -exp10 : exp10; e; e >>= 1, base *= base) {
+        if (e & 1) scale *= base;
+    }
+    v = exp10 < 0 ? v / scale : v * scale;
+    if (end) *end = (char *)p;
+    return neg ? -v : v;
+}
+
+double atof(const char *s) { return strtod(s, NULL); }
+
 void exit(int code) {
     /* Nothing is buffered in userspace yet (printf writes through), so
      * there is nothing to flush before leaving. */

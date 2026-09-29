@@ -192,6 +192,7 @@ static struct task *task_alloc(const char *name) {
     t->cr3 = vmm_kernel_cr3();
     t->kstack_top = kstack_base(t->kstack_slot) + KSTACK_SIZE;
     t->slice = TIME_SLICE_TICKS;
+    fpu_init_state(&t->fpu);
     return t;
 }
 
@@ -316,6 +317,7 @@ struct task *task_fork(const struct registers *regs) {
     t->brk = parent->brk;
     t->parent = parent;
     fd_inherit(t, parent);
+    fpu_save(&t->fpu); /* the parent's live registers */
 
     /* The child's first switch-in "returns" into fork_return, which pops a
      * copy of the parent's syscall frame and irets straight to user mode,
@@ -381,6 +383,10 @@ static void schedule(void) {
     c->switch_prev = cur;
     c->current = next;
     if (next->kstack_top) tss_set_rsp0(next->kstack_top);
+    /* Swap user FPU/SSE state eagerly. No kernel code runs FPU
+     * instructions, so the registers stay next's from here on. */
+    fpu_save(&cur->fpu);
+    fpu_restore(&next->fpu);
     context_switch(&cur->rsp, next->rsp, next->cr3);
     finish_switch_locked();
 }

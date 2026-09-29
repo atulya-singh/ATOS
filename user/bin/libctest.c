@@ -4,6 +4,7 @@
  * and greps for the ok lines. Exit code = number of failures. */
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,6 +110,69 @@ static int check_dup2(void) {
     return status == 0;
 }
 
+static int check_float_printf(void) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%.3f|%f|%g|%8.2f|%.0f|%-6.1f|%05.1f", 3.14159, -0.5, 2.5, 1234.567,
+             2.6, 1.25, -2.0);
+    return strcmp(buf, "3.142|-0.500000|2.5| 1234.57|3|1.3   |-02.0") == 0;
+}
+
+static int check_strtod(void) {
+    char *end;
+    double v = strtod("  -12.5e2xyz", &end);
+    return v == -1250.0 && strcmp(end, "xyz") == 0 && fabs(atof("0.001") - 0.001) < 1e-15 &&
+           atof("abc") == 0;
+}
+
+static int near(double a, double b) { return fabs(a - b) < 1e-9; }
+
+static int check_libm(void) {
+    return near(sqrt(2), 1.4142135623730951) && near(sin(M_PI / 2), 1) && near(cos(0), 1) &&
+           near(exp(log(10)), 10) && pow(2, 10) == 1024 && pow(-2, 3) == -8 && floor(-1.5) == -2 &&
+           ceil(1.2) == 2 && round(2.5) == 3 && near(fmod(7.5, 2), 1.5) &&
+           near(atan2(1, 1), M_PI / 4) && near(log10(1000), 3) && near(tan(M_PI / 4), 1) &&
+           isnan(sqrt(-1));
+}
+
+/* A long register-resident loop under a per-seed SSE rounding mode
+ * (MXCSR bits 13-14), with an occasional x87 sin. With more copies than
+ * CPUs, timer preemption lands mid-loop: if the kernel didn't save and
+ * restore FPU/SSE state, a copy would resume with another's registers or
+ * rounding mode and get a different answer. */
+static double crunch(int seed) {
+    unsigned saved, mxcsr;
+    asm volatile("stmxcsr %0" : "=m"(saved));
+    mxcsr = (saved & ~0x6000u) | (unsigned)(seed % 4) << 13;
+    asm volatile("ldmxcsr %0" : : "m"(mxcsr));
+    double a = seed + 0.25, b = 1.0 / (seed + 3), c = 0;
+    for (int i = 1; i <= 400000; i++) {
+        a = a * 1.0000001 + b;
+        b = b * 0.9999999 + a * 1e-9;
+        c += a / i;
+        if ((i & 0xFFFF) == 0) c += sin(c);
+    }
+    asm volatile("ldmxcsr %0" : : "m"(saved));
+    return a + b + c;
+}
+
+static int check_fpu_switch(void) {
+    enum { N = 8 };
+    double expect[N];
+    for (int k = 0; k < N; k++) expect[k] = crunch(k);
+    pid_t pids[N];
+    for (int k = 0; k < N; k++) {
+        pids[k] = fork();
+        if (pids[k] == 0) _exit(crunch(k) == expect[k] ? 0 : 1);
+    }
+    int ok = 1;
+    for (int k = 0; k < N; k++) {
+        int status = -1;
+        waitpid(pids[k], &status, 0);
+        if (status != 0) ok = 0;
+    }
+    return ok;
+}
+
 int main(int argc, char **argv) {
     /* The smoke test runs us as "libctest one two". */
     report("argv", argc == 3 && strcmp(argv[0], "libctest") == 0 && strcmp(argv[1], "one") == 0 &&
@@ -120,6 +184,10 @@ int main(int argc, char **argv) {
     report("exec errors", check_exec());
     report("write to .text kills the process", check_wx());
     report("dup2 redirection", check_dup2());
+    report("float printf", check_float_printf());
+    report("strtod", check_strtod());
+    report("libm", check_libm());
+    report("FPU state across context switches", check_fpu_switch());
     printf("libctest: %d failure(s)\n", failures);
     return failures;
 }
